@@ -1,0 +1,2845 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ticker Chart</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/luxon@3/build/global/luxon.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+    <style>
+      :root {
+        --bg: #f2f7fb;
+        --panel: #ffffff;
+        --ink: #111827;
+        --muted: #6b7280;
+        --accent: #0284c7;
+        --accent-soft: #e0f2fe;
+        --border: #dbe2ea;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        font-family: "Avenir Next", "Segoe UI", sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 8% 12%, #dff5ff 0%, transparent 28%),
+          radial-gradient(circle at 90% 90%, #ffeccc 0%, transparent 30%),
+          var(--bg);
+      }
+
+      .wrap {
+        max-width: 1500px;
+        margin: 24px auto;
+        padding: 16px;
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: 280px 1fr 300px;
+        gap: 14px;
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        box-shadow: 0 10px 24px rgba(17, 24, 39, 0.06);
+      }
+
+      .sidebar {
+        padding: 14px;
+      }
+
+      .import-panel {
+        padding: 14px;
+      }
+
+      .panel-name-input {
+        width: 100%;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 8px 10px;
+        font-weight: 600;
+      }
+
+      .import-controls {
+        margin-top: 8px;
+        display: grid;
+        gap: 8px;
+      }
+
+      .imported-list {
+        margin-top: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-height: 560px;
+        overflow-y: auto;
+      }
+
+
+      .portfolio-list {
+        margin-top: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-height: 560px;
+        overflow-y: scroll;
+        scrollbar-gutter: stable;
+      }
+
+      .portfolio-list::-webkit-scrollbar {
+        width: 10px;
+      }
+
+      .portfolio-list::-webkit-scrollbar-thumb {
+        background: #cbd5e1;
+        border-radius: 999px;
+      }
+
+      .portfolio-list::-webkit-scrollbar-track {
+        background: #eef2f7;
+      }
+
+      .portfolio-card {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: #fff;
+        padding: 8px;
+      }
+
+      .portfolio-ticker-list {
+        max-height: none;
+        overflow: visible;
+      }
+
+      .portfolio-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .portfolio-title {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 6px 8px;
+        width: 100%;
+        font-weight: 600;
+      }
+
+      .portfolio-meta {
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 4px;
+      }
+
+      .chrome-tab-strip {
+        display: flex;
+        align-items: flex-end;
+        gap: 4px;
+        overflow-x: auto;
+        padding: 2px 2px 0;
+      }
+
+      .chrome-tab {
+        border: 1px solid var(--border);
+        border-bottom: none;
+        background: #e8edf5;
+        color: #334155;
+        border-radius: 12px 12px 0 0;
+        padding: 7px 12px 6px;
+        font-size: 12px;
+        line-height: 1;
+        white-space: nowrap;
+      }
+
+      .chrome-tab.active {
+        background: #ffffff;
+        color: #0f172a;
+        box-shadow: 0 -1px 0 #fff inset;
+      }
+
+      .chrome-tab.add-tab {
+        border: none;
+        background: transparent;
+        border-radius: 0;
+        padding: 4px 8px;
+        font-size: 22px;
+        line-height: 1;
+        color: #334155;
+        box-shadow: none;
+      }
+
+      .chrome-tab.menu-tab {
+        margin-left: auto;
+        border: none;
+        background: transparent;
+        border-radius: 0;
+        padding: 4px 8px;
+        font-size: 18px;
+        line-height: 1;
+        color: #475569;
+        box-shadow: none;
+      }
+
+      .tab-actions-menu {
+        position: fixed;
+        z-index: 1200;
+        min-width: 120px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: #fff;
+        box-shadow: 0 12px 26px rgba(17, 24, 39, 0.14);
+        padding: 6px;
+      }
+
+      .tab-actions-item {
+        width: 100%;
+        text-align: left;
+        border: none;
+        background: transparent;
+        border-radius: 8px;
+        padding: 8px 10px;
+        font-size: 13px;
+        color: #0f172a;
+      }
+
+      .tab-actions-item:hover {
+        background: #e2e8f0;
+      }
+
+      .left-item-source {
+        font-size: 11px;
+        color: #64748b;
+        margin-top: 3px;
+        padding-left: 24px;
+      }
+
+      .right-tabs-wrap {
+        margin-top: 8px;
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 2px;
+      }
+
+      .left-tab-strip {
+        flex-wrap: wrap;
+        overflow-x: visible;
+        max-height: 110px;
+      }
+
+      .side-title {
+        font-size: 14px;
+        color: var(--muted);
+        margin-bottom: 8px;
+      }
+
+      .ticker-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-top: 10px;
+        max-height: 540px;
+        overflow-y: auto;
+      }
+
+      .ticker-item {
+        padding: 8px 10px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: #fff;
+      }
+
+      .ticker-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .ticker-label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: 600;
+      }
+
+      .row-actions-btn {
+        border: none;
+        background: transparent;
+        color: #475569;
+        font-size: 20px;
+        line-height: 1;
+        padding: 2px 6px;
+        border-radius: 8px;
+      }
+
+      .row-actions-btn:hover {
+        background: #e2e8f0;
+      }
+
+      .row-actions-menu {
+        position: fixed;
+        z-index: 1300;
+        min-width: 120px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: #fff;
+        box-shadow: 0 12px 26px rgba(17, 24, 39, 0.14);
+        padding: 6px;
+      }
+
+      .row-actions-item {
+        width: 100%;
+        text-align: left;
+        border: none;
+        background: transparent;
+        border-radius: 8px;
+        padding: 8px 10px;
+        font-size: 13px;
+        color: #0f172a;
+      }
+
+      .row-actions-item:hover {
+        background: #e2e8f0;
+      }
+
+      .ticker-pressure {
+        margin-top: 6px;
+      }
+
+      .ticker-pressure-text {
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 4px;
+      }
+
+      .chip {
+        font-size: 12px;
+        color: #075985;
+        background: var(--accent-soft);
+        border: 1px solid #bae6fd;
+        border-radius: 999px;
+        padding: 2px 8px;
+      }
+
+      .main {
+        padding: 16px;
+      }
+
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .ma-controls {
+        margin-top: 8px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .ma-controls label {
+        font-size: 12px;
+        color: #334155;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 4px 10px;
+        background: #fff;
+      }
+
+      .ticker-input {
+        width: 150px;
+        padding: 10px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        font-weight: 600;
+        letter-spacing: 0.4px;
+        text-transform: uppercase;
+      }
+
+      button {
+        border: 1px solid var(--border);
+        background: #fff;
+        color: var(--ink);
+        border-radius: 10px;
+        padding: 9px 12px;
+        cursor: pointer;
+      }
+
+      button.primary {
+        background: var(--accent);
+        color: #fff;
+        border-color: var(--accent);
+      }
+
+      button.range-btn.active {
+        background: var(--accent-soft);
+        border-color: var(--accent);
+        color: #075985;
+        font-weight: 600;
+      }
+
+      button.scale-btn.active {
+        background: #111827;
+        color: #fff;
+        border-color: #111827;
+      }
+
+      .meta {
+        margin-top: 12px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .error {
+        margin-top: 8px;
+        color: #b91c1c;
+        font-size: 14px;
+        min-height: 18px;
+      }
+
+      .chart-wrap {
+        margin-top: 16px;
+        height: 460px;
+      }
+
+      .rsi-chart-wrap {
+        margin-top: 10px;
+        height: 140px;
+      }
+
+      .pressure-panel {
+        margin-top: 12px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: #fff;
+        padding: 10px;
+      }
+
+      .pressure-title {
+        font-size: 13px;
+        color: var(--muted);
+        margin-bottom: 8px;
+      }
+
+      .pressure-item {
+        margin-bottom: 8px;
+      }
+
+      .pressure-head {
+        display: flex;
+        justify-content: space-between;
+        font-size: 13px;
+        margin-bottom: 4px;
+      }
+
+      .pressure-bar {
+        width: 100%;
+        height: 10px;
+        border-radius: 999px;
+        overflow: hidden;
+        background: #eef2f7;
+        display: flex;
+      }
+
+      .pressure-buy { background: #16a34a; }
+      .pressure-sell { background: #dc2626; }
+
+      .holdings-summary {
+        margin-top: 10px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: #fff;
+        padding: 10px;
+      }
+
+      .holdings-summary-title {
+        font-size: 13px;
+        color: var(--muted);
+        margin-bottom: 8px;
+      }
+
+      .holdings-grid {
+        display: grid;
+        grid-template-columns: 1.2fr 0.8fr 0.9fr 0.9fr 1fr;
+        gap: 6px;
+        font-size: 12px;
+      }
+
+      .holdings-head {
+        font-weight: 700;
+        color: #374151;
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 4px;
+      }
+
+      .holdings-row {
+        padding: 2px 0;
+      }
+
+      .holdings-pos { color: #16a34a; font-weight: 600; }
+      .holdings-neg { color: #dc2626; font-weight: 600; }
+
+      .holding-menu {
+        position: fixed;
+        z-index: 1000;
+        background: #fff;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        box-shadow: 0 12px 24px rgba(17,24,39,0.18);
+        padding: 8px;
+        min-width: 220px;
+      }
+
+      .holding-menu-title {
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 6px;
+      }
+
+      .holding-menu-list {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        max-height: 180px;
+        overflow: auto;
+      }
+
+      .holding-menu-actions {
+        margin-top: 8px;
+        display: flex;
+        justify-content: flex-end;
+        gap: 6px;
+      }
+
+      @media (max-width: 980px) {
+        .layout { grid-template-columns: 1fr; }
+        .chart-wrap { height: 360px; }
+        .rsi-chart-wrap { height: 120px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="layout">
+        <aside class="panel sidebar">
+          <div class="side-title">Ticker Categories (max selected: 5)</div>
+          <div id="selectedCount" class="chip">0 selected</div>
+          <div id="leftTabs" class="chrome-tab-strip left-tab-strip" style="margin-top:8px;"></div>
+          <div id="pressureOverall" class="pressure-panel"></div>
+          <div id="tickerList" class="ticker-list"></div>
+        </aside>
+
+        <section class="panel main">
+          <div class="controls">
+            <input id="tickerInput" class="ticker-input" placeholder="Add ticker" maxlength="12" />
+            <button id="addBtn" class="primary">Add Ticker</button>
+            <button class="range-btn" data-range="1d">1day</button>
+            <button class="range-btn" data-range="1w">1week</button>
+            <button class="range-btn active" data-range="1m">1month</button>
+            <button class="range-btn" data-range="3m">3month</button>
+            <button class="range-btn" data-range="1y">1year</button>
+            <button class="range-btn" data-range="max">max</button>
+            <button class="scale-btn active" data-scale="auto">auto</button>
+            <button class="scale-btn" data-scale="price">price</button>
+            <button class="scale-btn" data-scale="percent">%change</button>
+          </div>
+          <div class="ma-controls">
+            <label><input type="checkbox" class="ma-toggle" data-ma="ma30" />30d MA</label>
+            <label><input type="checkbox" class="ma-toggle" data-ma="ma90" />90d MA</label>
+            <label><input type="checkbox" class="ma-toggle" data-ma="ma1y" />1y MA</label>
+            <label><input type="checkbox" id="rsiToggle" />RSI (14)</label>
+          </div>
+
+          <div id="holdingsSummary" class="holdings-summary"></div>
+          <div class="meta" id="meta"></div>
+          <div class="error" id="error"></div>
+
+          <div class="chart-wrap">
+            <canvas id="priceChart"></canvas>
+          </div>
+          <div id="rsiWrap" class="rsi-chart-wrap" style="display:none;">
+            <canvas id="rsiChart"></canvas>
+          </div>
+        </section>
+
+        <aside class="panel import-panel">
+          <input id="csvFileInput" type="file" accept=".csv,text/csv" style="display:none;" />
+          <div id="portfolioSaveStatus" class="meta"></div>
+          <div id="importedPortfolioList" class="portfolio-list"></div>
+        </aside>
+      </div>
+    </div>
+
+    <script>
+      const STORAGE_KEY = "yf_saved_tickers_v1";
+      const MAX_SELECTED = 5;
+      const DEFAULT_TICKERS = [
+        { symbol: "NVDA", selected: true },
+        { symbol: "QQQ", selected: false },
+      ];
+      const COLORS = ["#0284c7", "#dc2626", "#16a34a", "#7c3aed", "#ea580c"];
+      const MA_STYLES = {
+        ma30: { label: "30d MA", color: "#f59e0b" },
+        ma90: { label: "90d MA", color: "#8b5cf6" },
+        ma1y: { label: "1y MA", color: "#64748b" },
+      };
+
+      let activeRange = "1m";
+      let priceChart = null;
+      let rsiChart = null;
+      let tickers = [];
+      let importedPortfolios = [];
+      let latestLoadSeq = 0;
+      let pressureByTicker = {};
+      let overallPressure = null;
+      let scaleMode = "auto";
+      let resolvedScaleMode = "price";
+      let portfoliosDirty = false;
+      let latestPayloadByTicker = {};
+      let leftCategories = [];
+      let activeLeftCategoryId = "default";
+      let holdingContextMenu = null;
+      let panelActionsMenu = null;
+      let rowActionsMenu = null;
+      let leftCategoriesSaveTimer = null;
+      let maVisibility = { ma30: false, ma90: false, ma1y: false };
+      let showRsi = false;
+
+      const tickerInput = document.getElementById("tickerInput");
+      const addBtn = document.getElementById("addBtn");
+      const tickerList = document.getElementById("tickerList");
+      const leftTabsEl = document.getElementById("leftTabs");
+      const selectedCount = document.getElementById("selectedCount");
+      const holdingsSummaryEl = document.getElementById("holdingsSummary");
+      const meta = document.getElementById("meta");
+      const errorEl = document.getElementById("error");
+      const pressureOverallEl = document.getElementById("pressureOverall");
+      const csvFileInput = document.getElementById("csvFileInput");
+      const portfolioSaveStatus = document.getElementById("portfolioSaveStatus");
+      const importedPortfolioList = document.getElementById("importedPortfolioList");
+      const rangeButtons = Array.from(document.querySelectorAll(".range-btn"));
+      const scaleButtons = Array.from(document.querySelectorAll(".scale-btn"));
+      const maToggleEls = Array.from(document.querySelectorAll(".ma-toggle"));
+      const rsiToggleEl = document.getElementById("rsiToggle");
+      const rsiWrapEl = document.getElementById("rsiWrap");
+
+      function sanitizeTicker(raw) {
+        return (raw || "").toUpperCase().replace(/[^A-Z0-9.\-]/g, "").slice(0, 12);
+      }
+
+      const CLIENT_LOG_SESSION_KEY = "yf_client_log_session_id";
+      const clientLogSessionId = (() => {
+        const fromStore = localStorage.getItem(CLIENT_LOG_SESSION_KEY);
+        if (fromStore) return fromStore;
+        const created = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+        localStorage.setItem(CLIENT_LOG_SESSION_KEY, created);
+        return created;
+      })();
+
+      function logAction(action, details = {}) {
+        try {
+          const body = {
+            action,
+            details,
+            session_id: clientLogSessionId,
+          };
+          fetch("/api/client-log", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+            keepalive: true,
+          }).catch(() => {});
+        } catch (_) {
+          // no-op: logging must never break UI behavior
+        }
+      }
+
+      function normalizeImportedPortfolios(items) {
+        if (!Array.isArray(items)) return [];
+        const seenNames = new Set();
+        const dedupedByName = [];
+        items.forEach((p) => {
+          const key = String(p?.name || "Imported Holdings").trim().toLowerCase();
+          if (seenNames.has(key)) return;
+          seenNames.add(key);
+          dedupedByName.push(p);
+        });
+
+        const out = dedupedByName
+          .map((p) => {
+            const tickers = Array.isArray(p?.tickers)
+              ? p.tickers
+                  .map((t) => {
+                    const symbol = sanitizeTicker(t?.symbol);
+                    const account = (t?.account || "").trim();
+                    const holdingId = String(t?.id || `${symbol}@@${account}`);
+                    return {
+                      id: holdingId,
+                      symbol,
+                      account,
+                      selected: !!t?.selected,
+                      shares: Number.isFinite(Number(t?.shares)) ? Number(t?.shares) : null,
+                      avgCost: Number.isFinite(Number(t?.avg_cost)) ? Number(t?.avg_cost) : null,
+                    };
+                  })
+                  .filter((t) => t.symbol)
+              : [];
+            const removedKeys = Array.isArray(p?.removed_keys)
+              ? p.removed_keys.map((x) => String(x || "").trim()).filter(Boolean)
+              : Array.isArray(p?.removed_symbols)
+                ? p.removed_symbols.map((x) => sanitizeTicker(x)).filter(Boolean)
+                : [];
+            return {
+              id: String(p?.id || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
+              name: (p?.name || "Imported Holdings").trim() || "Imported Holdings",
+              collapsed: !!p?.collapsed,
+              csvPath: String(p?.csv_path || ""),
+              missingFile: !!p?.missing_file,
+              removedKeys: Array.from(new Set(removedKeys)),
+              tickers,
+            };
+          })
+          .filter((p) => p.csvPath || p.tickers.length > 0);
+
+        if (out.length > 0 && out.every((p) => p.collapsed)) {
+          out[0].collapsed = false;
+        }
+        return out;
+      }
+
+
+      function normalizeLeftCategories(items) {
+        if (!Array.isArray(items) || items.length === 0) {
+          return [{ id: "default", name: "My Tickers", items: [] }];
+        }
+        const out = items
+          .map((c) => ({
+            id: String(c?.id || "").trim(),
+            name: (c?.name || "Category").trim() || "Category",
+            items: Array.isArray(c?.items)
+              ? c.items
+                  .map((it) => ({
+                    id: String(it?.id || `${sanitizeTicker(it?.symbol)}@@${(it?.account || "").trim()}`),
+                    symbol: sanitizeTicker(it?.symbol),
+                    account: (it?.account || "").trim(),
+                    label: (it?.label || "").trim(),
+                    selected: !!it?.selected,
+                    source: (it?.source || "manual").trim(),
+                    sourceTab: (it?.source_tab || it?.sourceTab || "").trim(),
+                    sourcePortfolioId: String(it?.source_portfolio_id || it?.sourcePortfolioId || "").trim(),
+                    sourceHoldingId: String(it?.source_holding_id || it?.sourceHoldingId || "").trim(),
+                    shares: Number.isFinite(Number(it?.shares)) ? Number(it.shares) : null,
+                  }))
+                  .filter((it) => it.symbol)
+              : [],
+          }))
+          .filter((c) => c.id);
+        return out.length ? out : [{ id: "default", name: "My Tickers", items: [] }];
+      }
+
+      function buildDefaultCategoryFromTickers() {
+        return {
+          id: "default",
+          name: "My Tickers",
+          items: (tickers || []).map((t) => ({
+            id: `${sanitizeTicker(t.symbol)}@@`,
+            symbol: sanitizeTicker(t.symbol),
+            account: "",
+            label: sanitizeTicker(t.symbol),
+            selected: !!t.selected,
+            source: "manual",
+            sourceTab: "",
+            sourcePortfolioId: "",
+            sourceHoldingId: "",
+            shares: null,
+          })),
+        };
+      }
+
+      async function loadLeftCategories() {
+        try {
+          const res = await fetch('/api/categories');
+          const payload = await res.json();
+          if (!res.ok) throw new Error(payload.error || 'Failed to load categories.');
+          leftCategories = normalizeLeftCategories(payload.categories || []);
+          if (leftCategories.length === 0) {
+            leftCategories = [buildDefaultCategoryFromTickers()];
+          }
+          if (!leftCategories.some((c) => c.id === activeLeftCategoryId)) {
+            activeLeftCategoryId = leftCategories[0].id;
+          }
+          logAction("left_categories_loaded", { count: leftCategories.length });
+        } catch (err) {
+          leftCategories = [buildDefaultCategoryFromTickers()];
+          activeLeftCategoryId = "default";
+          errorEl.textContent = `Category load failed: ${err.message || "unknown error"}`;
+          logAction("left_categories_load_failed", { error: err.message || "unknown error" });
+        }
+      }
+
+      function getActiveCategory() {
+        return leftCategories.find((c) => c.id === activeLeftCategoryId) || leftCategories[0] || null;
+      }
+
+      function renderLeftTabs() {
+        if (!leftTabsEl) return;
+        leftTabsEl.innerHTML = '';
+        leftCategories.forEach((c) => {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.textContent = c.name;
+          b.className = c.id === activeLeftCategoryId ? 'chrome-tab active' : 'chrome-tab';
+          b.addEventListener('click', () => {
+            activeLeftCategoryId = c.id;
+            renderLeftTabs();
+            renderTickerList();
+            logAction("left_tab_open", { tab_id: c.id, name: c.name });
+          });
+          b.addEventListener('contextmenu', (ev) => {
+            ev.preventDefault();
+            logAction("left_tab_context_open", { tab_id: c.id, name: c.name });
+            renameLeftCategoryById(c.id);
+          });
+          leftTabsEl.appendChild(b);
+        });
+
+        const addTab = document.createElement('button');
+        addTab.type = 'button';
+        addTab.textContent = '+';
+        addTab.className = 'chrome-tab add-tab';
+        addTab.addEventListener('click', addLeftCategory);
+        leftTabsEl.appendChild(addTab);
+
+        const menuTab = document.createElement('button');
+        menuTab.type = 'button';
+        menuTab.className = 'chrome-tab menu-tab';
+        menuTab.innerHTML = '&#8942;';
+        menuTab.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          openPanelActionsMenu("left", ev.clientX, ev.clientY);
+        });
+        leftTabsEl.appendChild(menuTab);
+      }
+
+      function renameLeftCategoryById(tabId) {
+        const target = leftCategories.find((c) => c.id === tabId);
+        if (!target) return;
+
+        const nextName = (window.prompt('Rename tab:', target.name || 'Category') || '').trim();
+        if (!nextName || nextName === target.name) return;
+
+        leftCategories = leftCategories.map((c) => c.id === tabId ? { ...c, name: nextName } : c);
+        renderLeftTabs();
+        logAction("left_tab_rename", { tab_id: tabId, old_name: target.name || '', new_name: nextName });
+        queueLeftCategoriesAutoSave("rename_tab");
+      }
+
+      function syncDefaultCategoryFromTickers() {
+        const def = leftCategories.find((c) => c.id === 'default');
+        if (!def) return;
+        def.items = (tickers || []).map((t) => ({
+          id: `${sanitizeTicker(t.symbol)}@@`,
+          symbol: sanitizeTicker(t.symbol),
+          account: '',
+          label: sanitizeTicker(t.symbol),
+          selected: !!t.selected,
+          source: 'manual',
+          sourceTab: '',
+          sourcePortfolioId: '',
+          sourceHoldingId: '',
+          shares: null,
+        }));
+      }
+
+      function queueLeftCategoriesAutoSave(reason = "auto") {
+        if (leftCategoriesSaveTimer) {
+          clearTimeout(leftCategoriesSaveTimer);
+        }
+        leftCategoriesSaveTimer = setTimeout(() => {
+          saveLeftCategories(true, reason);
+        }, 300);
+      }
+
+      async function saveLeftCategories(silent = false, reason = "manual") {
+        const active = getActiveCategory();
+        try {
+          const res = await fetch('/api/categories/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ categories: leftCategories }),
+          });
+          const payload = await res.json();
+          if (!res.ok) throw new Error(payload.error || 'Category save failed.');
+          leftCategories = normalizeLeftCategories(payload.categories || leftCategories);
+          renderLeftTabs();
+          renderTickerList();
+          logAction("left_tab_saved", { tab_id: active?.id || "", name: active?.name || "", silent: !!silent, reason });
+        } catch (err) {
+          if (!silent) {
+            errorEl.textContent = `Category save failed: ${err.message || "unknown error"}`;
+          }
+          logAction("left_tab_save_failed", { error: err.message || "unknown error" });
+        }
+      }
+
+      function addLeftCategory() {
+        const name = (window.prompt('New tab name:', 'Category') || '').trim();
+        if (!name) return;
+        const id = `cat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        leftCategories.push({ id, name, items: [] });
+        activeLeftCategoryId = id;
+        renderLeftTabs();
+        renderTickerList();
+        logAction("left_tab_add", { tab_id: id, name });
+        queueLeftCategoriesAutoSave("add_tab");
+      }
+
+      function addHoldingToCategories(holding, tabIds) {
+        const ids = Array.isArray(tabIds) ? tabIds : [];
+        if (!holding?.symbol || ids.length === 0) return;
+        const incomingShares = Number.isFinite(Number(holding?.shares)) ? Number(holding.shares) : null;
+        const sourcePortfolioId = String(holding?.sourcePortfolioId || "").trim();
+        const sourceHoldingId = String(holding?.sourceHoldingId || holding?.id || "").trim();
+        leftCategories = leftCategories.map((c) => {
+          if (!ids.includes(c.id)) return c;
+          const existingIdx = (c.items || []).findIndex((x) => String(x.id) === String(holding.id));
+          if (existingIdx >= 0) {
+            const nextItems = [...(c.items || [])];
+            nextItems[existingIdx] = { ...nextItems[existingIdx], shares: incomingShares, sourcePortfolioId, sourceHoldingId };
+            return { ...c, items: nextItems };
+          }
+          return {
+            ...c,
+            items: [
+              ...(c.items || []),
+              {
+                id: String(holding.id),
+                symbol: sanitizeTicker(holding.symbol),
+                account: (holding.account || '').trim(),
+                label: sanitizeTicker(holding.symbol),
+                selected: false,
+                shares: incomingShares,
+                source: 'imported',
+                sourcePortfolioId,
+                sourceHoldingId,
+                sourceTab: (() => {
+                  const tabName = (holding.sourceTab || '').trim();
+                  const acct = (holding.account || '').trim();
+                  if (tabName && acct) return `${tabName} - ${acct}`;
+                  return tabName || acct;
+                })(),
+              },
+            ],
+          };
+        });
+        renderTickerList();
+        renderLeftTabs();
+        updateSelectedCount();
+        logAction("holding_copied_to_tabs", { holding_id: holding.id, tabs: ids, selected: false });
+        queueLeftCategoriesAutoSave("copy_holding_to_tabs");
+
+      }
+      function closePanelActionsMenu() {
+        if (panelActionsMenu && panelActionsMenu.parentNode) {
+          panelActionsMenu.parentNode.removeChild(panelActionsMenu);
+        }
+        panelActionsMenu = null;
+      }
+
+      function openPanelActionsMenu(kind, x, y) {
+        closePanelActionsMenu();
+
+        const menu = document.createElement("div");
+        menu.className = "tab-actions-menu";
+
+        const saveBtn = document.createElement("button");
+        saveBtn.type = "button";
+        saveBtn.className = "tab-actions-item";
+        saveBtn.textContent = "Save";
+        saveBtn.addEventListener("click", () => {
+          if (kind === "left") {
+            logAction("left_tab_menu_save_click", {});
+            saveLeftCategories();
+          } else {
+            logAction("right_tab_menu_save_click", { portfolio_count: importedPortfolios.length });
+            saveImportedPortfoliosToServer();
+          }
+          closePanelActionsMenu();
+          closeRowActionsMenu();
+        });
+
+        menu.appendChild(saveBtn);
+
+        menu.style.left = String(Math.max(8, x)) + "px";
+        menu.style.top = String(Math.max(8, y)) + "px";
+
+        document.body.appendChild(menu);
+        panelActionsMenu = menu;
+        logAction("tab_actions_menu_open", { panel: kind });
+      }
+      function closeRowActionsMenu() {
+        if (rowActionsMenu && rowActionsMenu.parentNode) {
+          rowActionsMenu.parentNode.removeChild(rowActionsMenu);
+        }
+        rowActionsMenu = null;
+      }
+
+      function openRowActionsMenu(x, y, actions) {
+        closeRowActionsMenu();
+        const menu = document.createElement("div");
+        menu.className = "row-actions-menu";
+
+        (actions || []).forEach((a) => {
+          if (!a || !a.label || typeof a.onClick !== "function") return;
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "row-actions-item";
+          btn.textContent = a.label;
+          btn.addEventListener("click", () => {
+            closeRowActionsMenu();
+            a.onClick();
+          });
+          menu.appendChild(btn);
+        });
+
+        if (!menu.children.length) return;
+        menu.style.left = String(Math.max(8, x)) + "px";
+        menu.style.top = String(Math.max(8, y)) + "px";
+        document.body.appendChild(menu);
+        rowActionsMenu = menu;
+      }
+
+      function closeHoldingContextMenu() {
+        if (holdingContextMenu && holdingContextMenu.parentNode) {
+          holdingContextMenu.parentNode.removeChild(holdingContextMenu);
+        }
+        holdingContextMenu = null;
+      }
+
+      function openHoldingContextMenu(holding, x, y) {
+        closeHoldingContextMenu();
+
+        const menu = document.createElement('div');
+        menu.className = 'holding-menu';
+
+        const title = document.createElement('div');
+        title.className = 'holding-menu-title';
+        title.textContent = 'Copy to tabs';
+        menu.appendChild(title);
+
+        const list = document.createElement('div');
+        list.className = 'holding-menu-list';
+
+        const preselected = new Set(
+          (leftCategories || [])
+            .filter((c) => (c.items || []).some((it) => String(it.id) === String(holding.id)))
+            .map((c) => c.id)
+        );
+
+        (leftCategories || []).forEach((cat) => {
+          const label = document.createElement('label');
+          label.style.display = 'flex';
+          label.style.gap = '6px';
+          label.style.alignItems = 'center';
+
+          const cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.value = cat.id;
+          cb.checked = preselected.has(cat.id);
+
+          const txt = document.createElement('span');
+          txt.textContent = cat.name;
+
+          label.appendChild(cb);
+          label.appendChild(txt);
+          list.appendChild(label);
+        });
+
+        menu.appendChild(list);
+
+        const actions = document.createElement('div');
+        actions.className = 'holding-menu-actions';
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.addEventListener('click', closeHoldingContextMenu);
+
+        const applyBtn = document.createElement('button');
+        applyBtn.className = 'primary';
+        applyBtn.textContent = 'Apply';
+        applyBtn.addEventListener('click', () => {
+          const ids = Array.from(list.querySelectorAll('input[type="checkbox"]'))
+            .filter((el) => el.checked)
+            .map((el) => el.value)
+            .filter(Boolean);
+          addHoldingToCategories(holding, ids);
+          logAction('holding_copy_menu_apply', { holding_id: holding.id, tabs: ids });
+          closeHoldingContextMenu();
+        });
+
+        actions.appendChild(cancelBtn);
+        actions.appendChild(applyBtn);
+        menu.appendChild(actions);
+
+        menu.style.left = `${Math.max(8, x)}px`;
+        menu.style.top = `${Math.max(8, y)}px`;
+
+        document.body.appendChild(menu);
+        holdingContextMenu = menu;
+        logAction('holding_copy_menu_open', { holding_id: holding.id, x, y });
+      }
+
+      function setPortfolioDirty(message) {
+        portfoliosDirty = true;
+        if (portfolioSaveStatus) {
+          portfolioSaveStatus.textContent = message || "Unsaved holdings changes.";
+        }
+      }
+
+      function clearPortfolioDirty(message) {
+        portfoliosDirty = false;
+        if (portfolioSaveStatus) {
+          portfolioSaveStatus.textContent = message || "";
+        }
+      }
+
+      function getPortfolioSavePayload() {
+        return importedPortfolios.map((p) => ({
+          id: p.id,
+          name: (p.name || "Imported Holdings").trim() || "Imported Holdings",
+          collapsed: !!p.collapsed,
+          selected_keys: (p.tickers || []).filter((t) => t.selected).map((t) => String(t.id || "").trim()).filter(Boolean),
+          removed_keys: Array.from(new Set((p.removedKeys || []).map((x) => String(x || "").trim()).filter(Boolean))),
+          selected_symbols: (p.tickers || []).filter((t) => t.selected).map((t) => t.symbol),
+          removed_symbols: [],
+        }));
+      }
+
+      async function loadImportedPortfolios() {
+        try {
+          const res = await fetch('/api/portfolios');
+          const payload = await res.json();
+          if (!res.ok) {
+            throw new Error(payload.error || 'Failed to load imported holdings.');
+          }
+          importedPortfolios = normalizeImportedPortfolios(payload.portfolios || []);
+          clearPortfolioDirty(importedPortfolios.length ? "Loaded saved holdings." : "No saved holdings found.");
+        } catch (err) {
+          importedPortfolios = [];
+          clearPortfolioDirty("");
+          errorEl.textContent = `Holdings load failed: ${err.message || "unknown error"}`;
+        }
+      }
+
+      async function saveImportedPortfoliosToServer() {
+        try {
+          const res = await fetch('/api/portfolios/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ portfolios: getPortfolioSavePayload() }),
+          });
+          const payload = await res.json();
+          if (!res.ok) {
+            throw new Error(payload.error || 'Save failed.');
+          }
+          importedPortfolios = normalizeImportedPortfolios(payload.portfolios || []);
+          clearPortfolioDirty('Holdings saved.');
+          logAction("portfolio_save_success", { portfolio_count: importedPortfolios.length });
+          renderImportedPortfolios();
+          updateSelectedCount();
+          await loadData();
+        } catch (err) {
+          setPortfolioDirty(`Save failed: ${err.message || "unknown error"}`);
+          logAction("portfolio_save_failed", { error: err.message || "unknown error" });
+        }
+      }
+
+      function getAllImportedTickers() {
+        return importedPortfolios.flatMap((p) => p.tickers || []);
+      }
+
+      function getTotalSelectedCount() {
+        const left = leftCategories.flatMap((c) => c.items || []).filter((t) => t.selected).length;
+        const imported = getAllImportedTickers().filter((t) => t.selected).length;
+        return left + imported;
+      }
+
+      function getSelectedSymbols() {
+        const fromLeft = leftCategories.flatMap((c) => (c.items || []).filter((t) => t.selected).map((t) => t.symbol));
+        const importedSelected = importedPortfolios.flatMap((p) =>
+          (p.tickers || []).filter((t) => t.selected).map((t) => t.symbol)
+        );
+        const all = [
+          ...fromLeft,
+          ...importedSelected,
+        ];
+        return Array.from(new Set(all)).slice(0, MAX_SELECTED);
+      }
+
+      function getSelectedImportedHoldings() {
+        const out = [];
+        importedPortfolios.forEach((p) => {
+          (p.tickers || []).forEach((t) => {
+            if (!t.selected) return;
+            const symbol = sanitizeTicker(t.symbol);
+            if (!symbol) return;
+            const account = (t.account || "").trim();
+            const label = account ? `${symbol} (${account})` : symbol;
+            out.push({
+              id: t.id,
+              symbol,
+              account,
+              label,
+              shares: Number.isFinite(Number(t.shares)) ? Number(t.shares) : null,
+              avgCost: Number.isFinite(Number(t.avgCost)) ? Number(t.avgCost) : null,
+            });
+          });
+        });
+        return out;
+      }
+
+      function renderHoldingsSummary() {
+        if (!holdingsSummaryEl) return;
+
+        const selected = getSelectedImportedHoldings();
+        if (selected.length === 0) {
+          holdingsSummaryEl.innerHTML = '<div class="holdings-summary-title">Imported Holdings Metrics</div><div class="meta">Select imported holdings to show shares, cost, gain/loss, and market value.</div>';
+          return;
+        }
+
+        const rows = selected.map((h) => {
+          const payload = latestPayloadByTicker[h.symbol];
+          const current = payload && payload.points && payload.points.length
+            ? Number(payload.points[payload.points.length - 1].close)
+            : null;
+          const shares = Number.isFinite(h.shares) ? h.shares : null;
+          const avgCost = Number.isFinite(h.avgCost) ? h.avgCost : null;
+          const marketValue = shares != null && current != null ? shares * current : null;
+          const gainPct = avgCost != null && avgCost > 0 && current != null
+            ? ((current - avgCost) / avgCost) * 100
+            : null;
+
+          const gainClass = gainPct == null ? "" : gainPct >= 0 ? "holdings-pos" : "holdings-neg";
+          const gainText = gainPct == null ? "N/A" : `${gainPct >= 0 ? "+" : ""}${gainPct.toFixed(2)}%`;
+
+          return `
+            <div class="holdings-row">${h.label}</div>
+            <div class="holdings-row">${shares == null ? "N/A" : formatNumber(shares)}</div>
+            <div class="holdings-row">${avgCost == null ? "N/A" : formatNumber(avgCost)}</div>
+            <div class="holdings-row ${gainClass}">${gainText}</div>
+            <div class="holdings-row">${marketValue == null ? "N/A" : formatNumber(marketValue)}</div>
+          `;
+        }).join("");
+
+        holdingsSummaryEl.innerHTML = `
+          <div class="holdings-summary-title">Imported Holdings Metrics (Checked)</div>
+          <div class="holdings-grid">
+            <div class="holdings-head">Ticker</div>
+            <div class="holdings-head">Shares</div>
+            <div class="holdings-head">Avg Buy</div>
+            <div class="holdings-head">Gain/Loss %</div>
+            <div class="holdings-head">Market Value</div>
+            ${rows}
+          </div>
+        `;
+      }
+
+      function enforceMaxSelections() {
+        let count = 0;
+        leftCategories = leftCategories.map((c) => ({
+          ...c,
+          items: (c.items || []).map((t) => {
+            if (t.selected) {
+              count += 1;
+              if (count > MAX_SELECTED) return { ...t, selected: false };
+            }
+            return t;
+          }),
+        }));
+
+        importedPortfolios = importedPortfolios.map((p) => ({
+          ...p,
+          tickers: (p.tickers || []).map((t) => {
+            if (t.selected) {
+              count += 1;
+              if (count > MAX_SELECTED) return { ...t, selected: false };
+            }
+            return t;
+          }),
+        }));
+      }
+
+      function setExpandedPortfolio(portfolioId) {
+        const next = importedPortfolios.map((p) => ({
+          ...p,
+          collapsed: p.id !== portfolioId,
+        }));
+        const changed = next.some((p, idx) => p.collapsed !== importedPortfolios[idx]?.collapsed);
+        if (!changed) return;
+        importedPortfolios = next;
+        setPortfolioDirty('Unsaved holdings changes.');
+        logAction("portfolio_expand", { portfolio_id: portfolioId });
+        renderImportedPortfolios();
+      }
+
+      function renamePortfolio(portfolioId, name) {
+        importedPortfolios = importedPortfolios.map((p) =>
+          p.id === portfolioId ? { ...p, name: (name || "").trim() || "Imported Holdings" } : p
+        );
+        setPortfolioDirty('Unsaved holdings changes.');
+        logAction("portfolio_rename", { portfolio_id: portfolioId, name: (name || "").trim() || "Imported Holdings" });
+        renderImportedPortfolios();
+      }
+
+      function removeCopiedItemsFromLeftBySource({ portfolioId = "", holdingId = "", legacyPortfolioName = "" } = {}) {
+        const pId = String(portfolioId || "").trim();
+        const hId = String(holdingId || "").trim();
+        const legacy = String(legacyPortfolioName || "").trim();
+        if (!pId && !hId && !legacy) return;
+
+        let changed = false;
+        leftCategories = (leftCategories || []).map((c) => {
+          const prevItems = c.items || [];
+          const nextItems = prevItems.filter((it) => {
+            const srcPid = String(it?.sourcePortfolioId || it?.source_portfolio_id || "").trim();
+            const srcHid = String(it?.sourceHoldingId || it?.source_holding_id || "").trim();
+            if (pId && hId && srcPid === pId && srcHid === hId) return false;
+            if (pId && hId && !srcPid && String(it?.id || "").trim() === hId) return false;
+            if (pId && !hId && srcPid === pId) return false;
+            if (legacy && !srcPid) {
+              const srcTab = String(it?.sourceTab || it?.source_tab || "").trim();
+              if (srcTab === legacy || srcTab.startsWith(legacy + " - ")) return false;
+            }
+            return true;
+          });
+          if (nextItems.length !== prevItems.length) changed = true;
+          return nextItems.length === prevItems.length ? c : { ...c, items: nextItems };
+        });
+
+        if (changed) {
+          renderTickerList();
+          renderLeftTabs();
+          updateSelectedCount();
+          queueLeftCategoriesAutoSave("cleanup_from_right_delete");
+          logAction("left_cleanup_from_right", { portfolio_id: pId, holding_id: hId, legacy_portfolio_name: legacy });
+        }
+      }
+
+      function removeImportedTicker(portfolioId, holdingId) {
+        const id = String(holdingId || "").trim();
+        importedPortfolios = importedPortfolios.map((p) => {
+          if (p.id !== portfolioId) return p;
+          const nextTickers = (p.tickers || []).filter((t) => String(t.id || "") !== id);
+          const removed = Array.from(new Set([...(p.removedKeys || []), id]));
+          return { ...p, tickers: nextTickers, removedKeys: removed };
+        });
+        setPortfolioDirty('Unsaved holdings changes.');
+        logAction("portfolio_ticker_removed", { portfolio_id: portfolioId, holding_id: id });
+        removeCopiedItemsFromLeftBySource({ portfolioId, holdingId: id });
+        renderImportedPortfolios();
+        updateSelectedCount();
+        loadData();
+      }
+
+      function editImportedTickerShares(portfolioId, holdingId) {
+        const pId = String(portfolioId || "").trim();
+        const hId = String(holdingId || "").trim();
+        const portfolio = (importedPortfolios || []).find((p) => String(p.id) === pId);
+        const item = (portfolio?.tickers || []).find((t) => String(t.id || "") === hId);
+        if (!item) return;
+
+        const current = item.shares == null ? "" : String(item.shares);
+        const raw = window.prompt("Edit shares (blank clears value):", current);
+        if (raw === null) return;
+
+        const trimmed = String(raw).trim();
+        let nextShares = null;
+        if (trimmed !== "") {
+          const parsed = Number(trimmed.replace(/,/g, ""));
+          if (!Number.isFinite(parsed)) {
+            errorEl.textContent = "Invalid share value.";
+            return;
+          }
+          nextShares = parsed;
+        }
+
+        importedPortfolios = importedPortfolios.map((p) => {
+          if (String(p.id) !== pId) return p;
+          return {
+            ...p,
+            tickers: (p.tickers || []).map((t) =>
+              String(t.id || "") === hId ? { ...t, shares: nextShares } : t
+            ),
+          };
+        });
+
+        leftCategories = (leftCategories || []).map((c) => ({
+          ...c,
+          items: (c.items || []).map((it) => {
+            const srcPid = String(it?.sourcePortfolioId || it?.source_portfolio_id || "").trim();
+            const srcHid = String(it?.sourceHoldingId || it?.source_holding_id || "").trim();
+            if (srcPid === pId && srcHid === hId) {
+              return { ...it, shares: nextShares };
+            }
+            return it;
+          }),
+        }));
+
+        errorEl.textContent = "";
+        setPortfolioDirty('Unsaved holdings changes.');
+        renderImportedPortfolios();
+        renderTickerList();
+        updateSelectedCount();
+        queueLeftCategoriesAutoSave("sync_right_shares_to_left");
+        logAction("portfolio_ticker_shares_edit", { portfolio_id: pId, holding_id: hId, shares: nextShares });
+      }
+
+      function deleteImportedPortfolio(portfolioId) {
+        const removedPortfolio = importedPortfolios.find((p) => p.id === portfolioId) || null;
+        const next = importedPortfolios.filter((p) => p.id !== portfolioId);
+        importedPortfolios = next.map((p, idx) => ({
+          ...p,
+          collapsed: idx === 0 ? false : p.collapsed,
+        }));
+        setPortfolioDirty('Unsaved holdings changes.');
+        logAction("portfolio_deleted", { portfolio_id: portfolioId });
+        removeCopiedItemsFromLeftBySource({ portfolioId, legacyPortfolioName: removedPortfolio?.name || "" });
+        renderImportedPortfolios();
+        updateSelectedCount();
+        saveImportedPortfoliosToServer();
+      }
+
+      function renderImportedPortfolios() {
+        importedPortfolioList.innerHTML = "";
+
+        const tabWrap = document.createElement('div');
+        tabWrap.className = 'right-tabs-wrap';
+        const strip = document.createElement('div');
+        strip.className = 'chrome-tab-strip';
+
+        importedPortfolios.forEach((portfolio) => {
+          const tab = document.createElement('button');
+          tab.type = 'button';
+          tab.className = portfolio.collapsed ? 'chrome-tab' : 'chrome-tab active';
+          tab.textContent = portfolio.name;
+          tab.addEventListener('click', () => setExpandedPortfolio(portfolio.id));
+          strip.appendChild(tab);
+        });
+
+        const addTab = document.createElement('button');
+        addTab.type = 'button';
+        addTab.className = 'chrome-tab add-tab';
+        addTab.textContent = '+';
+        addTab.addEventListener('click', triggerPortfolioImportPicker);
+        strip.appendChild(addTab);
+
+        const menuTab = document.createElement('button');
+        menuTab.type = 'button';
+        menuTab.className = 'chrome-tab menu-tab';
+        menuTab.innerHTML = '&#8942;';
+        menuTab.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          openPanelActionsMenu("right", ev.clientX, ev.clientY);
+        });
+        strip.appendChild(menuTab);
+
+        tabWrap.appendChild(strip);
+        importedPortfolioList.appendChild(tabWrap);
+
+        if (importedPortfolios.length === 0) {
+          importedPortfolioList.insertAdjacentHTML('beforeend', '<div class="meta">No imported holdings yet. Use + to import CSV.</div>');
+          return;
+        }
+
+        const activePortfolio = importedPortfolios.find((p) => !p.collapsed) || importedPortfolios[0];
+        if (!activePortfolio) return;
+
+        const card = document.createElement("div");
+        card.className = "portfolio-card";
+
+        const head = document.createElement("div");
+        head.className = "portfolio-head";
+
+        const titleInput = document.createElement("input");
+        titleInput.className = "portfolio-title";
+        titleInput.value = activePortfolio.name;
+        titleInput.addEventListener("change", () => renamePortfolio(activePortfolio.id, titleInput.value));
+        titleInput.addEventListener("blur", () => renamePortfolio(activePortfolio.id, titleInput.value));
+
+        const deleteBtn = document.createElement("button");
+        deleteBtn.textContent = "Delete";
+        deleteBtn.addEventListener("click", () => {
+          deleteImportedPortfolio(activePortfolio.id);
+        });
+
+        head.appendChild(titleInput);
+        head.appendChild(deleteBtn);
+        card.appendChild(head);
+
+        const meta = document.createElement("div");
+        meta.className = "portfolio-meta";
+        meta.textContent = `${activePortfolio.tickers.length} tickers`;
+        card.appendChild(meta);
+
+        if (activePortfolio.missingFile) {
+          const missing = document.createElement('div');
+          missing.className = 'portfolio-meta';
+          missing.textContent = 'CSV file missing; re-import or remove this panel.';
+          card.appendChild(missing);
+        }
+
+        const list = document.createElement("div");
+        list.className = "ticker-list portfolio-ticker-list";
+
+        if (activePortfolio.tickers.length > 0) {
+          const hint = document.createElement('div');
+          hint.className = 'portfolio-meta';
+          hint.textContent = 'Right-click a ticker row to copy it to tabs.';
+          list.appendChild(hint);
+          if (activePortfolio.tickers.length > 5) {
+            const scrollHint = document.createElement('div');
+            scrollHint.className = 'portfolio-meta';
+            scrollHint.textContent = 'More holdings below. Scroll down.';
+            list.appendChild(scrollHint);
+          }
+        }
+
+        activePortfolio.tickers.forEach((t) => {
+          const row = document.createElement("div");
+          row.className = "ticker-item";
+
+          const top = document.createElement("div");
+          top.className = "ticker-row";
+
+          const label = document.createElement("label");
+          label.className = "ticker-label";
+
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.checked = !!t.selected;
+          checkbox.addEventListener("change", (e) => toggleImportedTicker(activePortfolio.id, t.id, e.target.checked));
+
+          const text = document.createElement("span");
+          text.textContent = t.symbol;
+
+          label.appendChild(checkbox);
+          label.appendChild(text);
+
+          const actionsBtn = document.createElement("button");
+          actionsBtn.type = "button";
+          actionsBtn.className = "row-actions-btn";
+          actionsBtn.innerHTML = "&#8942;";
+          actionsBtn.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            openRowActionsMenu(ev.clientX, ev.clientY, [
+              {
+                label: "Edit shares",
+                onClick: () => editImportedTickerShares(activePortfolio.id, t.id),
+              },
+              {
+                label: "Remove",
+                onClick: () => removeImportedTicker(activePortfolio.id, t.id),
+              },
+            ]);
+          });
+
+          top.appendChild(label);
+          top.appendChild(actionsBtn);
+          row.appendChild(top);
+
+          if ((t.account || '').trim()) {
+            const acctLine = document.createElement("div");
+            acctLine.className = "portfolio-meta";
+            acctLine.textContent = t.account;
+            row.appendChild(acctLine);
+          }
+
+          const info = document.createElement("div");
+          info.className = "portfolio-meta";
+          const shareTxt = t.shares == null ? "N/A" : formatNumber(t.shares);
+          const avgTxt = t.avgCost == null ? "N/A" : formatNumber(t.avgCost);
+          info.textContent = `Shares: ${shareTxt} | Avg Buy: ${avgTxt}`;
+          row.appendChild(info);
+
+          row.addEventListener('contextmenu', (ev) => {
+            ev.preventDefault();
+            openHoldingContextMenu({ ...t, sourceTab: activePortfolio.name, sourcePortfolioId: activePortfolio.id, sourceHoldingId: String(t.id || "") }, ev.clientX, ev.clientY);
+          });
+
+          list.appendChild(row);
+        });
+
+        card.appendChild(list);
+        importedPortfolioList.appendChild(card);
+      }
+
+      function toggleImportedTicker(portfolioId, holdingId, checked) {
+        const selectedNow = getTotalSelectedCount();
+        if (checked && selectedNow >= MAX_SELECTED) {
+          errorEl.textContent = `You can select up to ${MAX_SELECTED} tickers.`;
+          renderImportedPortfolios();
+          return;
+        }
+
+        errorEl.textContent = "";
+        importedPortfolios = importedPortfolios.map((p) => {
+          if (p.id !== portfolioId) return p;
+          return {
+            ...p,
+            tickers: p.tickers.map((t) => (String(t.id || "") === String(holdingId || "") ? { ...t, selected: checked } : t)),
+          };
+        });
+
+        setPortfolioDirty('Unsaved holdings changes.');
+        logAction("portfolio_ticker_toggle", { portfolio_id: portfolioId, holding_id: String(holdingId || ""), checked: !!checked });
+        updateSelectedCount();
+        renderImportedPortfolios();
+        loadData();
+      }
+
+      function triggerPortfolioImportPicker() {
+        if (!csvFileInput) return;
+        csvFileInput.value = '';
+        csvFileInput.click();
+        logAction('portfolio_import_picker_open', {});
+      }
+
+      async function importCsvFile(fileArg = null) {
+        const file = fileArg || (csvFileInput && csvFileInput.files && csvFileInput.files[0]);
+        if (!file) {
+          errorEl.textContent = "Choose a CSV file first.";
+          return;
+        }
+
+        const suggested = file.name.replace(/\.csv$/i, "") || "Imported Holdings";
+        const name = (window.prompt('New import tab name:', suggested) || '').trim() || suggested;
+
+        logAction("portfolio_import_click", { filename: file.name, name });
+        const formData = new FormData();
+        formData.append('name', name);
+        formData.append('file', file);
+
+        try {
+          const res = await fetch('/api/portfolios/import', {
+            method: 'POST',
+            body: formData,
+          });
+          const payload = await res.json();
+          if (!res.ok) {
+            throw new Error(payload.error || 'Import failed.');
+          }
+
+          importedPortfolios = normalizeImportedPortfolios(payload.portfolios || []);
+          enforceMaxSelections();
+          clearPortfolioDirty('Portfolio imported. Click Save Holdings Layout to persist selections/removals.');
+          renderImportedPortfolios();
+          updateSelectedCount();
+          if (csvFileInput) csvFileInput.value = '';
+          errorEl.textContent = `Imported '${name}'.`;
+          logAction("portfolio_import_success", { name, portfolio_count: importedPortfolios.length });
+          await loadData();
+        } catch (err) {
+          errorEl.textContent = `CSV import failed: ${err.message || "unknown error"}`;
+          logAction("portfolio_import_failed", { error: err.message || "unknown error", name });
+        }
+      }
+
+
+
+      function loadTickers() {
+        try {
+          const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+          if (Array.isArray(stored) && stored.length > 0) {
+            tickers = stored
+              .map((t) => {
+                if (typeof t === "string") {
+                  return { symbol: sanitizeTicker(t), selected: false };
+                }
+                return { symbol: sanitizeTicker(t?.symbol), selected: !!t?.selected };
+              })
+              .filter((t) => t.symbol);
+          } else {
+            tickers = [...DEFAULT_TICKERS];
+          }
+        } catch {
+          tickers = [...DEFAULT_TICKERS];
+        }
+
+        // Enforce max selected at startup.
+        let count = 0;
+        tickers = tickers.map((t) => {
+          if (t.selected) {
+            count += 1;
+            if (count > MAX_SELECTED) return { ...t, selected: false };
+          }
+          return t;
+        });
+
+        // Persist normalized startup state so reloads stay consistent.
+        saveTickers();
+      }
+
+      function saveTickers() {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(tickers));
+      }
+
+      function updateSelectedCount() {
+        const count = getTotalSelectedCount();
+        selectedCount.textContent = `${count} selected`;
+        renderHoldingsSummary();
+      }
+
+      function removeTicker(symbol) {
+        tickers = tickers.filter((t) => t.symbol !== symbol);
+        logAction("saved_ticker_removed", { symbol });
+        saveTickers();
+        syncDefaultCategoryFromTickers();
+        renderLeftTabs();
+        renderTickerList();
+        queueLeftCategoriesAutoSave("remove_saved_ticker");
+        loadData();
+      }
+
+      function toggleTicker(symbol, checked) {
+        const selectedNow = getTotalSelectedCount();
+        if (checked && selectedNow >= MAX_SELECTED) {
+          errorEl.textContent = `You can select up to ${MAX_SELECTED} tickers.`;
+          renderTickerList();
+          return;
+        }
+
+        errorEl.textContent = "";
+        logAction("saved_ticker_toggle", { symbol, checked: !!checked });
+        tickers = tickers.map((t) => (t.symbol === symbol ? { ...t, selected: checked } : t));
+        saveTickers();
+        syncDefaultCategoryFromTickers();
+        renderLeftTabs();
+        renderTickerList();
+        queueLeftCategoriesAutoSave("toggle_saved_ticker");
+        loadData();
+      }
+      function editLeftTickerShares(tabId, holdingId) {
+        const cat = (leftCategories || []).find((c) => c.id === tabId);
+        const item = (cat?.items || []).find((it) => String(it.id) === String(holdingId));
+        if (!item) return;
+
+        const current = item.shares == null ? "" : String(item.shares);
+        const raw = window.prompt("Edit shares (blank clears value):", current);
+        if (raw === null) return;
+
+        const trimmed = String(raw).trim();
+        let nextShares = null;
+        if (trimmed !== "") {
+          const parsed = Number(trimmed.replace(/,/g, ""));
+          if (!Number.isFinite(parsed)) {
+            errorEl.textContent = "Invalid share value.";
+            return;
+          }
+          nextShares = parsed;
+        }
+
+        leftCategories = leftCategories.map((c) => {
+          if (c.id !== tabId) return c;
+          return {
+            ...c,
+            items: (c.items || []).map((it) =>
+              String(it.id) === String(holdingId) ? { ...it, shares: nextShares } : it
+            ),
+          };
+        });
+
+        errorEl.textContent = "";
+        renderTickerList();
+        queueLeftCategoriesAutoSave("edit_left_shares");
+        logAction("left_ticker_shares_edit", { tab_id: tabId, holding_id: holdingId, shares: nextShares });
+      }
+
+      function renderTickerList() {
+        tickerList.innerHTML = "";
+        const active = getActiveCategory();
+        if (!active) {
+          updateSelectedCount();
+          return;
+        }
+        const sortedItems = [...(active.items || [])].sort((a, b) => {
+          const sa = String(a?.symbol || "");
+          const sb = String(b?.symbol || "");
+          if (sa < sb) return -1;
+          if (sa > sb) return 1;
+          const aa = String(a?.account || "");
+          const ab = String(b?.account || "");
+          if (aa < ab) return -1;
+          if (aa > ab) return 1;
+          return String(a?.id || "").localeCompare(String(b?.id || ""));
+        });
+
+        const lastPressureIndexBySymbol = new Map();
+        sortedItems.forEach((it, idx) => {
+          if (it && it.symbol) lastPressureIndexBySymbol.set(it.symbol, idx);
+        });
+
+
+        sortedItems.forEach((t, idx) => {
+          const row = document.createElement("div");
+          row.className = "ticker-item";
+
+          const top = document.createElement("div");
+          top.className = "ticker-row";
+
+          const label = document.createElement("label");
+          label.className = "ticker-label";
+
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.checked = !!t.selected;
+          checkbox.addEventListener("change", (e) => {
+            const checked = !!e.target.checked;
+            leftCategories = leftCategories.map((c) => {
+              if (c.id !== active.id) return c;
+              return { ...c, items: (c.items || []).map((it) => String(it.id) === String(t.id) ? { ...it, selected: checked } : it) };
+            });
+            if (active.id === "default" && (t.source || "") === "manual") {
+              tickers = tickers.map((x) => x.symbol === t.symbol ? { ...x, selected: checked } : x);
+              saveTickers();
+            }
+            logAction("left_ticker_toggle", { tab_id: active.id, holding_id: t.id, checked });
+            renderTickerList();
+            queueLeftCategoriesAutoSave("toggle_left_ticker");
+            loadData();
+          });
+
+          const text = document.createElement("span");
+          text.textContent = t.label || (t.account ? `${t.symbol} (${t.account})` : t.symbol);
+
+          label.appendChild(checkbox);
+          label.appendChild(text);
+
+          const actionsBtn = document.createElement("button");
+          actionsBtn.type = "button";
+          actionsBtn.className = "row-actions-btn";
+          actionsBtn.innerHTML = "&#8942;";
+          actionsBtn.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            openRowActionsMenu(ev.clientX, ev.clientY, [
+              {
+                label: "Edit shares",
+                onClick: () => editLeftTickerShares(active.id, t.id),
+              },
+              {
+                label: "Remove",
+                onClick: () => {
+                  leftCategories = leftCategories.map((c) => c.id !== active.id ? c : { ...c, items: (c.items || []).filter((it) => String(it.id) !== String(t.id)) });
+                  if (active.id === "default" && (t.source || "") === "manual") {
+                    tickers = tickers.filter((x) => x.symbol !== t.symbol);
+                    saveTickers();
+                  }
+                  logAction("left_ticker_remove", { tab_id: active.id, holding_id: t.id });
+                  renderTickerList();
+                  renderLeftTabs();
+                  queueLeftCategoriesAutoSave("remove_left_ticker");
+                  loadData();
+                },
+              },
+            ]);
+          });
+
+          top.appendChild(label);
+          top.appendChild(actionsBtn);
+          row.appendChild(top);
+
+          if ((t.sourceTab || '').trim()) {
+            const src = document.createElement('div');
+            src.className = 'left-item-source';
+            src.textContent = t.sourceTab;
+            row.appendChild(src);
+          }
+
+          if (t.shares != null) {
+            const sharesRow = document.createElement('div');
+            sharesRow.className = 'left-item-source';
+            sharesRow.textContent = 'Shares: ' + formatNumber(t.shares);
+            row.appendChild(sharesRow);
+          }
+          const pressure = pressureByTicker[t.symbol];
+          if (pressure) {
+            const lastIdx = lastPressureIndexBySymbol.get(t.symbol);
+            if (lastIdx != null && idx !== lastIdx) {
+              tickerList.appendChild(row);
+              return;
+            }
+            const pressureWrap = document.createElement("div");
+            pressureWrap.className = "ticker-pressure";
+            const txt = document.createElement("div");
+            txt.className = "ticker-pressure-text";
+            txt.textContent = `Buy ${pressure.buyPct.toFixed(1)}% / Sell ${pressure.sellPct.toFixed(1)}%`;
+            const bar = document.createElement("div");
+            bar.className = "pressure-bar";
+            const buy = document.createElement("div");
+            buy.className = "pressure-buy";
+            buy.style.width = `${pressure.buyPct}%`;
+            const sell = document.createElement("div");
+            sell.className = "pressure-sell";
+            sell.style.width = `${pressure.sellPct}%`;
+            bar.appendChild(buy);
+            bar.appendChild(sell);
+            pressureWrap.appendChild(txt);
+            pressureWrap.appendChild(bar);
+            row.appendChild(pressureWrap);
+          }
+
+          tickerList.appendChild(row);
+        });
+
+        updateSelectedCount();
+      }
+
+      function setActiveRange(range) {
+        activeRange = range;
+        logAction("range_change", { range });
+        rangeButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.range === range));
+      }
+
+      function setScaleMode(mode) {
+        scaleMode = mode;
+        logAction("scale_mode_change", { mode });
+        scaleButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.scale === mode));
+      }
+
+      function computePriceRatio(payloads) {
+        let minClose = Number.POSITIVE_INFINITY;
+        let maxClose = 0;
+        payloads.forEach((p) => {
+          p.points.forEach((pt) => {
+            const c = Number(pt.close || 0);
+            if (c > 0) {
+              minClose = Math.min(minClose, c);
+              maxClose = Math.max(maxClose, c);
+            }
+          });
+        });
+        if (!Number.isFinite(minClose) || minClose <= 0 || maxClose <= 0) return 1;
+        return maxClose / minClose;
+      }
+
+      function pickResolvedScaleMode(payloads) {
+        if (scaleMode !== "auto") return scaleMode;
+        const ratio = computePriceRatio(payloads);
+        if (payloads.length > 1 && ratio >= 8) {
+          return "percent";
+        }
+        return "price";
+      }
+
+      function formatNumber(value) {
+        return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value);
+      }
+
+      function formatSignedNumber(value) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return "N/A";
+        const sign = n >= 0 ? "+" : "";
+        return `${sign}${formatNumber(n)}`;
+      }
+
+      function formatSignedPercent(value) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return "N/A";
+        const sign = n >= 0 ? "+" : "";
+        return `${sign}${n.toFixed(2)}%`;
+      }
+
+      function getEtSessionLabel(dtEt) {
+        const mins = dtEt.hour * 60 + dtEt.minute;
+        if (mins < (9 * 60 + 30)) return "pre";
+        if (mins <= (16 * 60)) return "regular";
+        return "after";
+      }
+
+      function buildOneDaySessionSummary(payload) {
+        const points = Array.isArray(payload?.points) ? payload.points : [];
+        if (!points.length) return "";
+
+        const parsed = points
+          .map((pt) => {
+            const dt = luxon.DateTime.fromISO(String(pt?.t || ""), { zone: "utc" }).setZone("America/New_York");
+            const close = Number(pt?.close);
+            if (!dt.isValid || !Number.isFinite(close)) return null;
+            return { dt, close };
+          })
+          .filter(Boolean);
+        if (!parsed.length) return "";
+
+        const regular = parsed.filter((x) => getEtSessionLabel(x.dt) === "regular");
+        const closePoint = regular.length ? regular[regular.length - 1] : parsed[parsed.length - 1];
+        const regularBase = regular.length ? regular[0] : parsed[0];
+        const latestPoint = parsed[parsed.length - 1];
+        const latestSession = getEtSessionLabel(latestPoint.dt);
+        const closeTs = closePoint.dt.toFormat("h:mm a");
+        const latestTs = latestPoint.dt.toFormat("h:mm a");
+        const closeDelta = closePoint.close - regularBase.close;
+        const closePct = regularBase.close > 0 ? (closeDelta / regularBase.close) * 100 : Number.NaN;
+
+        if (latestSession === "after" && latestPoint.dt.toMillis() > closePoint.dt.toMillis()) {
+          const afterDelta = latestPoint.close - closePoint.close;
+          const afterPct = closePoint.close > 0 ? (afterDelta / closePoint.close) * 100 : Number.NaN;
+          return `${payload.ticker} close ${formatNumber(closePoint.close)} ${formatSignedNumber(closeDelta)} (${formatSignedPercent(closePct)}) (${closeTs} ET) | after ${formatNumber(latestPoint.close)} ${formatSignedNumber(afterDelta)} (${formatSignedPercent(afterPct)}) (${latestTs} ET)`;
+        }
+        return `${payload.ticker} last ${formatNumber(latestPoint.close)} ${formatSignedNumber(closeDelta)} (${formatSignedPercent(closePct)}) (${latestTs} ET)`;
+      }
+
+      function isMultiDayRange(rangeKey) {
+        return rangeKey !== "1d";
+      }
+
+      function formatXAxisTick(value) {
+        const dt = luxon.DateTime.fromMillis(Number(value));
+        if (!dt.isValid) return "";
+
+        if (!isMultiDayRange(activeRange)) {
+          return dt.toFormat("h:mm a");
+        }
+
+        // For multi-day intraday views, include day + time so labels are not ambiguous.
+        if (["1w", "1m", "3m"].includes(activeRange)) {
+          return dt.toFormat("MMM d h a");
+        }
+
+        return dt.toFormat("MMM d");
+      }
+
+      function hexToRgba(hex, alpha) {
+        const clean = (hex || "").replace("#", "");
+        if (clean.length !== 6) return `rgba(2,132,199,${alpha})`;
+        const r = parseInt(clean.slice(0, 2), 16);
+        const g = parseInt(clean.slice(2, 4), 16);
+        const b = parseInt(clean.slice(4, 6), 16);
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+      }
+
+      let priceTooltipEl = null;
+      let hoverSyncTs = null;
+
+      const hoverSyncLinePlugin = {
+        id: "hoverSyncLine",
+        afterDraw(chart) {
+          if (!Number.isFinite(hoverSyncTs)) return;
+          const xScale = chart?.scales?.x;
+          const area = chart?.chartArea;
+          if (!xScale || !area) return;
+          const x = xScale.getPixelForValue(hoverSyncTs);
+          if (!Number.isFinite(x) || x < area.left || x > area.right) return;
+
+          const { ctx } = chart;
+          ctx.save();
+          ctx.setLineDash([5, 4]);
+          ctx.lineWidth = 1;
+          ctx.strokeStyle = "rgba(71, 85, 105, 0.9)";
+          ctx.beginPath();
+          ctx.moveTo(x, area.top);
+          ctx.lineTo(x, area.bottom);
+          ctx.stroke();
+          ctx.restore();
+        },
+      };
+      if (typeof Chart !== "undefined" && Chart?.register) {
+        Chart.register(hoverSyncLinePlugin);
+      }
+
+      function getPriceTooltipEl() {
+        if (priceTooltipEl) return priceTooltipEl;
+        const el = document.createElement("div");
+        el.style.position = "absolute";
+        el.style.pointerEvents = "none";
+        el.style.background = "rgba(17, 24, 39, 0.92)";
+        el.style.color = "#fff";
+        el.style.borderRadius = "10px";
+        el.style.padding = "10px 12px";
+        el.style.fontSize = "12px";
+        el.style.lineHeight = "1.35";
+        el.style.whiteSpace = "nowrap";
+        el.style.zIndex = "1400";
+        el.style.opacity = "0";
+        document.body.appendChild(el);
+        priceTooltipEl = el;
+        return el;
+      }
+
+      function renderPriceTooltip(context) {
+        const { chart, tooltip } = context;
+        const el = getPriceTooltipEl();
+        if (!tooltip || tooltip.opacity === 0 || !tooltip.dataPoints || tooltip.dataPoints.length === 0) {
+          el.style.opacity = "0";
+          hoverSyncTs = null;
+          if (rsiChart) rsiChart.draw();
+          return;
+        }
+
+        const pt = tooltip.dataPoints[0];
+        const raw = pt.raw || {};
+        const dt = raw.x ? new Date(raw.x) : null;
+        hoverSyncTs = dt ? dt.getTime() : null;
+        if (rsiChart) rsiChart.draw();
+        const dateTxt = dt ? dt.toLocaleString() : "N/A";
+        const ticker = String(pt.dataset?.label || "");
+        const openVal = raw.open;
+        const closeVal = raw.close;
+        const highVal = raw.high;
+        const lowVal = raw.low;
+        const volumeVal = raw.volume;
+
+        el.innerHTML = [
+          `<div><strong>Date: ${dateTxt}</strong></div>`,
+          `<div style="margin-top:4px;"><strong>${ticker}</strong></div>`,
+          `<div>Open: ${openVal == null ? "N/A" : formatNumber(openVal)}</div>`,
+          `<div>Close: ${closeVal == null ? "N/A" : formatNumber(closeVal)}</div>`,
+          `<div>High: ${highVal == null ? "N/A" : formatNumber(highVal)}</div>`,
+          `<div>Low: ${lowVal == null ? "N/A" : formatNumber(lowVal)}</div>`,
+          `<div>Volume: ${volumeVal == null ? "N/A" : formatNumber(volumeVal)}</div>`,
+        ].join("");
+
+        const x = pt.element?.x ?? tooltip.caretX ?? 0;
+        const y = pt.element?.y ?? tooltip.caretY ?? 0;
+        const rect = chart.canvas.getBoundingClientRect();
+        const docX = window.pageXOffset + rect.left;
+        const docY = window.pageYOffset + rect.top;
+        const pad = 16;
+        const minLeft = window.pageXOffset + 8;
+        const maxLeft = window.pageXOffset + window.innerWidth - el.offsetWidth - 8;
+
+        let left = docX + x - el.offsetWidth - pad;
+        if (left < minLeft) {
+          left = docX + x + pad;
+        }
+        left = Math.max(minLeft, Math.min(maxLeft, left));
+
+        const minTop = window.pageYOffset + 8;
+        const maxTop = window.pageYOffset + window.innerHeight - el.offsetHeight - 8;
+        let top = docY + y - (el.offsetHeight / 2);
+        top = Math.max(minTop, Math.min(maxTop, top));
+
+        el.style.left = `${left}px`;
+        el.style.top = `${top}px`;
+        el.style.opacity = "1";
+      }
+
+      function syncVolumeWindowFromPrice() {
+        if (!priceChart) return;
+        const xScale = priceChart.scales?.x;
+        if (!xScale) return;
+        if (rsiChart) {
+          rsiChart.options.scales.x.min = xScale.min;
+          rsiChart.options.scales.x.max = xScale.max;
+          rsiChart.update("none");
+        }
+      }
+
+      function buildMovingAverageOverlay(pricePoints, maPoints, baseClose) {
+        const src = Array.isArray(maPoints) ? maPoints : [];
+        if (!src.length || !Array.isArray(pricePoints) || !pricePoints.length) return [];
+
+        const daily = src
+          .map((m) => {
+            const ts = Date.parse(String(m?.t || ""));
+            const v = Number(m?.v);
+            if (!Number.isFinite(ts) || !Number.isFinite(v)) return null;
+            return { ts, v };
+          })
+          .filter(Boolean)
+          .sort((a, b) => a.ts - b.ts);
+        if (!daily.length) return [];
+
+        const out = [];
+        let idx = -1;
+        pricePoints.forEach((pt) => {
+          const ts = Date.parse(String(pt?.t || ""));
+          if (!Number.isFinite(ts)) return;
+          while (idx + 1 < daily.length && daily[idx + 1].ts <= ts) {
+            idx += 1;
+          }
+          if (idx < 0) return;
+          const maVal = daily[idx].v;
+          let yVal = maVal;
+          if (resolvedScaleMode === "percent" && baseClose > 0) {
+            yVal = ((maVal / baseClose) - 1) * 100;
+          }
+          out.push({ x: pt.t, y: yVal });
+        });
+        return out;
+      }
+
+      function buildRsiSeries(pricePoints, period = 14) {
+        const points = Array.isArray(pricePoints) ? pricePoints : [];
+        if (points.length <= period) return [];
+
+        const closes = points.map((pt) => Number(pt?.close));
+        if (closes.some((v) => !Number.isFinite(v))) return [];
+
+        let gainSum = 0;
+        let lossSum = 0;
+        for (let i = 1; i <= period; i += 1) {
+          const diff = closes[i] - closes[i - 1];
+          gainSum += Math.max(diff, 0);
+          lossSum += Math.max(-diff, 0);
+        }
+        let avgGain = gainSum / period;
+        let avgLoss = lossSum / period;
+
+        const calcRsi = () => {
+          if (avgLoss === 0 && avgGain === 0) return 50;
+          if (avgLoss === 0) return 100;
+          const rs = avgGain / avgLoss;
+          return 100 - (100 / (1 + rs));
+        };
+
+        const out = [{ x: points[period].t, y: calcRsi() }];
+        for (let i = period + 1; i < closes.length; i += 1) {
+          const diff = closes[i] - closes[i - 1];
+          const gain = Math.max(diff, 0);
+          const loss = Math.max(-diff, 0);
+          avgGain = ((avgGain * (period - 1)) + gain) / period;
+          avgLoss = ((avgLoss * (period - 1)) + loss) / period;
+          out.push({ x: points[i].t, y: calcRsi() });
+        }
+        return out;
+      }
+
+      function buildBollingerSeries(series, windowSize = 20, numStd = 2) {
+        if (!Array.isArray(series) || series.length < 2) {
+          return { upper: [], lower: [] };
+        }
+
+        const effectiveWindow = Math.max(2, Math.min(windowSize, series.length));
+
+        const upper = [];
+        const lower = [];
+
+        for (let i = effectiveWindow - 1; i < series.length; i += 1) {
+          const slice = series.slice(i - effectiveWindow + 1, i + 1).map((p) => p.y);
+          const mean = slice.reduce((acc, v) => acc + v, 0) / slice.length;
+          const variance = slice.reduce((acc, v) => acc + (v - mean) ** 2, 0) / slice.length;
+          const std = Math.sqrt(variance);
+
+          upper.push({ x: series[i].x, y: mean + numStd * std });
+          lower.push({ x: series[i].x, y: mean - numStd * std });
+        }
+
+        return { upper, lower };
+      }
+
+      async function fetchTickerData(symbol) {
+        try {
+          const res = await fetch(`/api/history?ticker=${encodeURIComponent(symbol)}&range=${encodeURIComponent(activeRange)}`);
+          const payload = await res.json();
+          if (!res.ok) {
+            throw new Error(`${symbol}: ${payload.error || "Request failed."}`);
+          }
+          return payload;
+        } catch (err) {
+          throw new Error(`${symbol}: ${err.message || "Request failed."}`);
+        }
+      }
+
+      function drawChart(payloads) {
+        const ctx = document.getElementById("priceChart").getContext("2d");
+        resolvedScaleMode = pickResolvedScaleMode(payloads);
+
+        if (priceChart) {
+          priceChart.destroy();
+        }
+        if (rsiChart) {
+          rsiChart.destroy();
+          rsiChart = null;
+        }
+
+        const datasets = [];
+        const maxVolume = payloads.reduce((acc, p) => {
+          const localMax = (p.points || []).reduce((m, pt) => Math.max(m, Number(pt?.volume || 0)), 0);
+          return Math.max(acc, localMax);
+        }, 0);
+
+        payloads.forEach((p, idx) => {
+          const color = COLORS[idx % COLORS.length];
+          const baseClose = Number(p.points?.[0]?.close || 0);
+          const series = p.points.map((pt) => {
+            const rawClose = Number(pt.close || 0);
+            let yVal = rawClose;
+            if (resolvedScaleMode === "percent" && baseClose > 0) {
+              yVal = ((rawClose / baseClose) - 1) * 100;
+            }
+            return {
+              x: pt.t,
+              y: yVal,
+              open: pt.open,
+              high: pt.high,
+              low: pt.low,
+              close: pt.close,
+              volume: pt.volume,
+            };
+          });
+          if (series.length === 0) return;
+
+          datasets.push({
+            type: "bar",
+            label: `${p.ticker} Vol`,
+            data: p.points.map((pt) => ({ x: pt.t, y: Number(pt.volume || 0) })),
+            yAxisID: "yVol",
+            backgroundColor: hexToRgba(color, 0.28),
+            borderColor: hexToRgba(color, 0.55),
+            borderWidth: 0,
+            order: 0,
+            barPercentage: 0.95,
+            categoryPercentage: 0.95,
+            pointRadius: 0,
+            pointHoverRadius: 0,
+            isOverlay: true,
+            isVolume: true,
+          });
+
+          datasets.push({
+            label: p.ticker,
+            data: series,
+            yAxisID: "y",
+            borderColor: color,
+            backgroundColor: `${color}22`,
+            fill: false,
+            tension: 0.18,
+            borderWidth: 2,
+            order: 2,
+            pointRadius: 0,
+            pointHoverRadius: 5,
+            pointHoverBorderWidth: 2,
+            pointHitRadius: 10,
+          });
+
+          const bandWindow = activeRange === "1m" ? 10 : 20;
+          const bands = buildBollingerSeries(series, bandWindow, 2);
+          const showBands = payloads.length === 1;
+          if (showBands && bands.upper.length > 0 && bands.lower.length > 0) {
+            datasets.push({
+              label: `${p.ticker} upper`,
+              data: bands.upper,
+              yAxisID: "y",
+              borderColor: hexToRgba(color, 0.65),
+              borderDash: [4, 4],
+              borderWidth: 1,
+              fill: false,
+              tension: 0,
+              order: 3,
+              pointRadius: bands.upper.length <= 2 ? 2 : 0,
+              pointHoverRadius: 0,
+              pointHitRadius: 0,
+              isReferenceLine: true,
+            });
+            datasets.push({
+              label: `${p.ticker} lower`,
+              data: bands.lower,
+              yAxisID: "y",
+              borderColor: hexToRgba(color, 0.65),
+              borderDash: [4, 4],
+              borderWidth: 1,
+              fill: false,
+              tension: 0,
+              order: 3,
+              pointRadius: bands.lower.length <= 2 ? 2 : 0,
+              pointHoverRadius: 0,
+              pointHitRadius: 0,
+              isReferenceLine: true,
+            });
+          }
+
+          if (resolvedScaleMode === "price" || resolvedScaleMode === "log") {
+            // Horizontal dotted line at current (latest) price.
+            const firstX = series[0].x;
+            const lastX = series[series.length - 1].x;
+            const currentY = series[series.length - 1].y;
+            datasets.push({
+              label: `${p.ticker} current`,
+              data: [
+                { x: firstX, y: currentY },
+                { x: lastX, y: currentY },
+              ],
+              yAxisID: "y",
+              borderColor: color,
+              borderDash: [6, 4],
+              borderWidth: 1.5,
+              fill: false,
+              tension: 0,
+              order: 4,
+              pointRadius: 0,
+              pointHitRadius: 0,
+              isReferenceLine: true,
+            });
+          }
+
+          Object.entries(MA_STYLES).forEach(([maKey, style]) => {
+            if (!maVisibility[maKey]) return;
+            const maSeries = buildMovingAverageOverlay(p.points, p.moving_averages?.[maKey], baseClose);
+            if (!maSeries.length) return;
+            datasets.push({
+              label: `${p.ticker} ${style.label}`,
+              data: maSeries,
+              yAxisID: "y",
+              borderColor: style.color,
+              borderWidth: 1.5,
+              borderDash: [5, 3],
+              fill: false,
+              tension: 0.1,
+              order: 3,
+              pointRadius: 0,
+              pointHoverRadius: 0,
+              pointHitRadius: 0,
+              isOverlay: true,
+            });
+          });
+        });
+
+        priceChart = new Chart(ctx, {
+          type: "line",
+          data: { datasets },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: "index", intersect: false },
+            plugins: {
+              legend: {
+                display: true,
+                labels: {
+                  filter: (legendItem, data) => {
+                    const ds = data.datasets[legendItem.datasetIndex];
+                    return !ds.isReferenceLine && !ds.isVolume;
+                  },
+                },
+              },
+              tooltip: {
+                enabled: false,
+                filter: (ctx) => !ctx.dataset.isReferenceLine && !ctx.dataset.isOverlay,
+                external: renderPriceTooltip,
+              },
+              zoom: {
+                pan: {
+                  enabled: true,
+                  mode: "x",
+                  onPanComplete: () => syncVolumeWindowFromPrice(),
+                },
+                zoom: {
+                  wheel: { enabled: true },
+                  pinch: { enabled: true },
+                  drag: { enabled: false },
+                  mode: "x",
+                  onZoomComplete: () => syncVolumeWindowFromPrice(),
+                },
+              },
+            },
+            scales: {
+              x: {
+                type: isMultiDayRange(activeRange) ? "timeseries" : "time",
+                distribution: isMultiDayRange(activeRange) ? "series" : "linear",
+                time: {
+                  tooltipFormat: "DDD t",
+                  displayFormats: {
+                    minute: "MMM d h:mm a",
+                    hour: "MMM d h a",
+                    day: "MMM d",
+                  },
+                },
+                ticks: {
+                  maxTicksLimit: 8,
+                  callback: (value) => formatXAxisTick(value),
+                },
+              },
+              yVol: {
+                type: "linear",
+                position: "right",
+                display: false,
+                beginAtZero: true,
+                max: maxVolume > 0 ? (maxVolume / 0.22) : 1,
+                grid: {
+                  drawOnChartArea: false,
+                },
+              },
+              y: {
+                type: resolvedScaleMode === "log" ? "logarithmic" : "linear",
+                ticks: {
+                  callback: (v) => {
+                    if (resolvedScaleMode === "percent") return `${formatNumber(v)}%`;
+                    return formatNumber(v);
+                  },
+                },
+              },
+            },
+          },
+        });
+
+        if (showRsi) {
+          if (rsiWrapEl) rsiWrapEl.style.display = "block";
+          const rsiCtx = document.getElementById("rsiChart").getContext("2d");
+          const rsiDatasets = payloads
+            .map((p, idx) => ({
+              type: "line",
+              label: `${p.ticker} RSI`,
+              data: buildRsiSeries(p.points, 14),
+              borderColor: COLORS[idx % COLORS.length],
+              borderWidth: 1.8,
+              fill: false,
+              tension: 0.15,
+              pointRadius: 0,
+            }))
+            .filter((d) => Array.isArray(d.data) && d.data.length > 0);
+
+          if (rsiDatasets.length > 0) {
+            const src = rsiDatasets[0].data;
+            const firstX = src[0]?.x;
+            const lastX = src[src.length - 1]?.x;
+            if (firstX && lastX) {
+              rsiDatasets.push({
+                type: "line",
+                label: "RSI 70",
+                data: [{ x: firstX, y: 70 }, { x: lastX, y: 70 }],
+                borderColor: "#ef4444",
+                borderDash: [5, 4],
+                borderWidth: 1,
+                pointRadius: 0,
+                fill: false,
+                isReferenceLine: true,
+              });
+              rsiDatasets.push({
+                type: "line",
+                label: "RSI 30",
+                data: [{ x: firstX, y: 30 }, { x: lastX, y: 30 }],
+                borderColor: "#22c55e",
+                borderDash: [5, 4],
+                borderWidth: 1,
+                pointRadius: 0,
+                fill: false,
+                isReferenceLine: true,
+              });
+            }
+
+            rsiChart = new Chart(rsiCtx, {
+              type: "line",
+              data: { datasets: rsiDatasets },
+              options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: "index", intersect: false },
+                plugins: {
+                  legend: {
+                    display: true,
+                    labels: {
+                      filter: (legendItem, data) => {
+                        const ds = data.datasets[legendItem.datasetIndex];
+                        return !ds.isReferenceLine;
+                      },
+                    },
+                  },
+                },
+                scales: {
+                  x: {
+                    type: isMultiDayRange(activeRange) ? "timeseries" : "time",
+                    distribution: isMultiDayRange(activeRange) ? "series" : "linear",
+                    display: false,
+                  },
+                  y: {
+                    min: 0,
+                    max: 100,
+                    ticks: { callback: (v) => formatNumber(v) },
+                  },
+                },
+              },
+            });
+          }
+        }
+        if (!showRsi && rsiWrapEl) {
+          rsiWrapEl.style.display = "none";
+        }
+        syncVolumeWindowFromPrice();
+      }
+
+      function updatePressureState(payloads) {
+        pressureByTicker = {};
+        overallPressure = null;
+
+        if (!Array.isArray(payloads) || payloads.length === 0) {
+          pressureOverallEl.innerHTML = '<div class="pressure-title">Estimated Buy/Sell Pressure</div><div class="meta">No data.</div>';
+          renderTickerList();
+          return;
+        }
+
+        let totalBuy = 0;
+        let totalSell = 0;
+
+        payloads.forEach((p) => {
+          let buy = 0;
+          let sell = 0;
+
+          p.points.forEach((pt) => {
+            const vol = Number(pt.volume || 0);
+            if (pt.open == null || pt.close == null) return;
+            if (pt.close >= pt.open) {
+              buy += vol;
+            } else {
+              sell += vol;
+            }
+          });
+
+          const total = buy + sell;
+          const buyPct = total > 0 ? (buy / total) * 100 : 0;
+          const sellPct = 100 - buyPct;
+
+          pressureByTicker[p.ticker] = { buy, sell, buyPct, sellPct };
+          totalBuy += buy;
+          totalSell += sell;
+        });
+
+        const grandTotal = totalBuy + totalSell;
+        const totalBuyPct = grandTotal > 0 ? (totalBuy / grandTotal) * 100 : 0;
+        const totalSellPct = 100 - totalBuyPct;
+        overallPressure = { totalBuy, totalSell, totalBuyPct, totalSellPct };
+
+        pressureOverallEl.innerHTML = `
+          <div class="pressure-title">Overall Buy/Sell Pressure (heuristic)</div>
+          <div class="pressure-head">
+            <span><strong>Overall</strong></span>
+            <span>Buy ${totalBuyPct.toFixed(1)}% / Sell ${totalSellPct.toFixed(1)}%</span>
+          </div>
+          <div class="pressure-bar">
+            <div class="pressure-buy" style="width:${totalBuyPct}%;"></div>
+            <div class="pressure-sell" style="width:${totalSellPct}%;"></div>
+          </div>
+        `;
+
+        renderTickerList();
+      }
+
+      async function loadData() {
+        const loadSeq = ++latestLoadSeq;
+        const selectedSymbols = getSelectedSymbols();
+        const selected = selectedSymbols.map((symbol) => ({ symbol }));
+
+        if (selected.length === 0) {
+          if (priceChart) priceChart.destroy();
+          if (rsiChart) {
+            rsiChart.destroy();
+            rsiChart = null;
+          }
+          latestPayloadByTicker = {};
+          meta.textContent = "Select at least one ticker.";
+          updatePressureState([]);
+          renderHoldingsSummary();
+          return;
+        }
+
+        errorEl.textContent = "";
+        meta.textContent = `Loading ${selected.map((t) => t.symbol).join(", ")} (${activeRange})...`;
+
+        const results = await Promise.allSettled(selected.map((t) => fetchTickerData(t.symbol)));
+        // Ignore stale responses from older in-flight loads.
+        if (loadSeq !== latestLoadSeq) {
+          return;
+        }
+
+        const fulfilled = results.filter((r) => r.status === "fulfilled").map((r) => r.value);
+        latestPayloadByTicker = {};
+        fulfilled.forEach((p) => {
+          if (p && p.ticker) latestPayloadByTicker[p.ticker] = p;
+        });
+        renderHoldingsSummary();
+        const nonEmpty = fulfilled.filter((p) => Array.isArray(p.points) && p.points.length > 0);
+        const emptyTickers = fulfilled.filter((p) => !Array.isArray(p.points) || p.points.length === 0).map((p) => p.ticker);
+        const failures = results
+          .filter((r) => r.status === "rejected")
+          .map((r) => r.reason?.message || "Request failed.");
+
+        if (nonEmpty.length === 0) {
+          if (priceChart) priceChart.destroy();
+          if (rsiChart) {
+            rsiChart.destroy();
+            rsiChart = null;
+          }
+          meta.textContent = "No data returned for selected tickers.";
+          const skipped = [
+            ...emptyTickers.map((t) => `${t}: no data for selected range`),
+            ...failures,
+          ];
+          errorEl.textContent = skipped.join(" | ");
+          updatePressureState([]);
+          return;
+        }
+
+        drawChart(nonEmpty);
+        updatePressureState(nonEmpty);
+
+        const summary = activeRange === "1d"
+          ? nonEmpty.map((p) => buildOneDaySessionSummary(p)).filter(Boolean).join(" | ")
+          : nonEmpty
+              .map((p) => {
+                const first = p.points[0].close;
+                const last = p.points[p.points.length - 1].close;
+                const chg = ((last - first) / first) * 100;
+                const sign = chg >= 0 ? "+" : "";
+                return `${p.ticker}: ${sign}${chg.toFixed(2)}%`;
+              })
+              .join(" | ");
+
+        meta.textContent = `range: ${activeRange} | scale: ${resolvedScaleMode} | loaded ${nonEmpty.length}/${selected.length} | ${summary}`;
+        const skipped = [
+          ...emptyTickers.map((t) => `${t}: no data for selected range`),
+          ...failures,
+        ];
+        errorEl.textContent = skipped.length ? `Skipped: ${skipped.join(" | ")}` : "";
+      }
+
+      function addTicker() {
+        const symbol = sanitizeTicker(tickerInput.value);
+        if (!symbol) {
+          errorEl.textContent = "Enter a valid ticker.";
+          return;
+        }
+
+        if (tickers.some((t) => t.symbol === symbol) || getAllImportedTickers().some((t) => t.symbol === symbol)) {
+          errorEl.textContent = `${symbol} is already in your lists.`;
+          return;
+        }
+
+        const selectedNow = getTotalSelectedCount();
+        tickers.unshift({ symbol, selected: selectedNow < MAX_SELECTED });
+        logAction("saved_ticker_added", { symbol, auto_selected: selectedNow < MAX_SELECTED });
+
+        if (selectedNow >= MAX_SELECTED) {
+          errorEl.textContent = `Added ${symbol}. Select it by unchecking another ticker first.`;
+        } else {
+          errorEl.textContent = "";
+        }
+
+        tickerInput.value = "";
+        saveTickers();
+        syncDefaultCategoryFromTickers();
+        renderLeftTabs();
+        renderTickerList();
+        loadData();
+      }
+
+      addBtn.addEventListener("click", addTicker);
+      tickerInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") addTicker();
+      });
+
+      rangeButtons.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          setActiveRange(btn.dataset.range);
+          loadData();
+        });
+      });
+
+      scaleButtons.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          setScaleMode(btn.dataset.scale);
+          loadData();
+        });
+      });
+
+      maToggleEls.forEach((el) => {
+        el.addEventListener("change", () => {
+          const key = String(el.dataset.ma || "").trim();
+          if (!key || !(key in maVisibility)) return;
+          maVisibility[key] = !!el.checked;
+          const selectedSymbols = getSelectedSymbols();
+          const payloads = selectedSymbols
+            .map((symbol) => latestPayloadByTicker[symbol])
+            .filter((p) => Array.isArray(p?.points) && p.points.length > 0);
+          if (!payloads.length) return;
+          drawChart(payloads);
+          logAction("ma_toggle", { key, enabled: !!el.checked });
+        });
+      });
+
+      if (rsiToggleEl) {
+        rsiToggleEl.addEventListener("change", () => {
+          showRsi = !!rsiToggleEl.checked;
+          if (rsiWrapEl) rsiWrapEl.style.display = showRsi ? "block" : "none";
+          const selectedSymbols = getSelectedSymbols();
+          const payloads = selectedSymbols
+            .map((symbol) => latestPayloadByTicker[symbol])
+            .filter((p) => Array.isArray(p?.points) && p.points.length > 0);
+          if (!payloads.length) return;
+          drawChart(payloads);
+          logAction("rsi_toggle", { enabled: showRsi });
+        });
+      }
+
+      if (csvFileInput) {
+        csvFileInput.addEventListener("change", () => importCsvFile());
+      }
+
+      async function initApp() {
+        logAction("app_init_start", {});
+        loadTickers();
+        await loadImportedPortfolios();
+        await loadLeftCategories();
+        syncDefaultCategoryFromTickers();
+        enforceMaxSelections();
+        saveTickers();
+        setScaleMode("auto");
+        updatePressureState([]);
+        renderLeftTabs();
+        renderTickerList();
+        renderImportedPortfolios();
+        updateSelectedCount();
+        await loadData();
+        logAction("app_init_done", {
+          saved_tickers: tickers.length,
+          imported_portfolios: importedPortfolios.length,
+          selected_count: getTotalSelectedCount(),
+        });
+      }
+
+      document.addEventListener('click', (e) => {
+        if (holdingContextMenu && !holdingContextMenu.contains(e.target)) {
+          closeHoldingContextMenu();
+        }
+        if (panelActionsMenu && !panelActionsMenu.contains(e.target)) {
+          closePanelActionsMenu();
+        }
+        if (rowActionsMenu && !rowActionsMenu.contains(e.target)) {
+          closeRowActionsMenu();
+        }
+      });
+
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          closeHoldingContextMenu();
+          closePanelActionsMenu();
+        }
+      });
+
+      window.addEventListener("error", (e) => {
+        logAction("frontend_error", {
+          message: e.message || "unknown",
+          source: e.filename || "",
+          line: e.lineno || 0,
+          column: e.colno || 0,
+        });
+      });
+
+      window.addEventListener("unhandledrejection", (e) => {
+        const reason = e.reason && e.reason.message ? e.reason.message : String(e.reason || "unknown");
+        logAction("frontend_unhandled_rejection", { reason });
+      });
+
+      initApp();
+    </script>
+  </body>
+</html>
