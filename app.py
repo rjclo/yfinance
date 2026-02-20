@@ -3,8 +3,10 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import math
 import os
 import re
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -36,9 +38,26 @@ PORTFOLIO_CONFIG_PATH = PORTFOLIO_DIR / "portfolios.json"
 LOG_DIR = BASE_DIR / "data" / "logs"
 SERVER_LOG_PATH = LOG_DIR / "server.log"
 CLIENT_ACTION_LOG_PATH = LOG_DIR / "client_actions.jsonl"
+RSI_MONITOR_LOG_PATH = LOG_DIR / "rsi_monitor.jsonl"
 
 CATEGORY_DIR = BASE_DIR / "data" / "categories"
 CATEGORY_CONFIG_PATH = CATEGORY_DIR / "categories.json"
+
+RSI_MONITOR_INTERVAL_SEC = int(os.getenv("RSI_MONITOR_INTERVAL_SEC", "600"))
+RSI_PERIOD = 14
+
+_rsi_monitor_lock = threading.Lock()
+_rsi_monitor_stop = threading.Event()
+_rsi_monitor_thread: threading.Thread | None = None
+_rsi_monitor_state: dict = {
+    "running": False,
+    "interval_sec": RSI_MONITOR_INTERVAL_SEC,
+    "last_run_utc": None,
+    "watchlist": [],
+    "latest": {},
+    "events": [],
+    "last_error": "",
+}
 
 
 def _ensure_portfolio_storage() -> None:
@@ -73,6 +92,166 @@ def _append_client_action_log(entry: dict) -> None:
     _ensure_log_storage()
     with CLIENT_ACTION_LOG_PATH.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=True) + "\n")
+
+
+def _append_rsi_monitor_log(entry: dict) -> None:
+    _ensure_log_storage()
+    with RSI_MONITOR_LOG_PATH.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=True) + "\n")
+
+
+def _extract_watchlist_symbols_from_categories() -> list[str]:
+    categories = _load_category_config()
+    symbols: list[str] = []
+    seen: set[str] = set()
+    for cat in categories:
+        if not isinstance(cat, dict):
+            continue
+        for it in cat.get("items", []) if isinstance(cat.get("items"), list) else []:
+            if not isinstance(it, dict):
+                continue
+            sym = _sanitize_ticker(it.get("symbol"))
+            if not sym or sym in seen:
+                continue
+            seen.add(sym)
+            symbols.append(sym)
+    return symbols
+
+
+def _extract_close_series(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame(columns=["date", "close"])
+
+    work = df.copy()
+    if "date" not in work.columns:
+        for candidate in ("Date", "Datetime", "index"):
+            if candidate in work.columns:
+                work = work.rename(columns={candidate: "date"})
+                break
+    if "date" not in work.columns:
+        return pd.DataFrame(columns=["date", "close"])
+
+    close_candidates = ["Close", "Adj Close"]
+    close_candidates.extend([c for c in work.columns if str(c).endswith("_Close") or str(c).startswith("Close_")])
+    close_candidates.extend(
+        [c for c in work.columns if str(c).endswith("_Adj Close") or str(c).startswith("Adj Close_")]
+    )
+    close_col = next((c for c in close_candidates if c in work.columns), None)
+    if not close_col:
+        return pd.DataFrame(columns=["date", "close"])
+
+    out = work[["date", close_col]].copy()
+    out = out.rename(columns={close_col: "close"})
+    out["date"] = pd.to_datetime(out["date"], utc=True, errors="coerce")
+    out["close"] = pd.to_numeric(out["close"], errors="coerce")
+    out = out.dropna(subset=["date", "close"]).sort_values("date")
+    return out
+
+
+def _compute_rsi_points(close_df: pd.DataFrame, period: int = RSI_PERIOD) -> list[dict]:
+    if close_df.empty or len(close_df.index) <= period:
+        return []
+
+    closes = close_df["close"].tolist()
+    dates = close_df["date"].tolist()
+    if len(closes) <= period:
+        return []
+
+    gains = 0.0
+    losses = 0.0
+    for i in range(1, period + 1):
+        diff = closes[i] - closes[i - 1]
+        gains += max(diff, 0.0)
+        losses += max(-diff, 0.0)
+    avg_gain = gains / period
+    avg_loss = losses / period
+
+    def calc_rsi() -> float:
+        if avg_loss == 0 and avg_gain == 0:
+            return 50.0
+        if avg_loss == 0:
+            return 100.0
+        rs = avg_gain / avg_loss
+        return 100.0 - (100.0 / (1.0 + rs))
+
+    out: list[dict] = [
+        {"t": dates[period].isoformat(), "rsi": float(calc_rsi()), "close": float(closes[period])}
+    ]
+    for i in range(period + 1, len(closes)):
+        diff = closes[i] - closes[i - 1]
+        gain = max(diff, 0.0)
+        loss = max(-diff, 0.0)
+        avg_gain = ((avg_gain * (period - 1)) + gain) / period
+        avg_loss = ((avg_loss * (period - 1)) + loss) / period
+        out.append({"t": dates[i].isoformat(), "rsi": float(calc_rsi()), "close": float(closes[i])})
+    return out
+
+
+def _analyze_intraday_rsi(ticker: str) -> dict:
+    df = fetch_price_history(ticker=ticker, period="1d", interval="1m", prepost=True)
+    close_df = _extract_close_series(df)
+    points = _compute_rsi_points(close_df, period=RSI_PERIOD)
+    latest = points[-1] if points else None
+    return {
+        "ticker": ticker,
+        "points_count": len(points),
+        "latest": latest,
+        "events": [],
+    }
+
+
+def _run_rsi_monitor_once(force_tickers: list[str] | None = None) -> dict:
+    tickers = force_tickers if force_tickers is not None else _extract_watchlist_symbols_from_categories()
+    tickers = [_sanitize_ticker(t) for t in tickers]
+    tickers = [t for t in tickers if t]
+    tickers = list(dict.fromkeys(tickers))
+
+    latest: dict[str, dict] = {}
+    errors: list[str] = []
+    for ticker in tickers:
+        try:
+            result = _analyze_intraday_rsi(ticker)
+            latest[ticker] = {
+                "points_count": result["points_count"],
+                "latest": result["latest"],
+            }
+        except Exception as exc:
+            errors.append(f"{ticker}: {exc}")
+
+    with _rsi_monitor_lock:
+        _rsi_monitor_state["last_run_utc"] = datetime.now(timezone.utc).isoformat()
+        _rsi_monitor_state["watchlist"] = tickers
+        _rsi_monitor_state["latest"] = latest
+        _rsi_monitor_state["events"] = []
+        if errors:
+            _rsi_monitor_state["last_error"] = " | ".join(errors)[:4000]
+
+    return {"watchlist": tickers, "latest": latest, "events": [], "errors": errors}
+
+
+def _rsi_monitor_loop() -> None:
+    with _rsi_monitor_lock:
+        _rsi_monitor_state["running"] = True
+    while not _rsi_monitor_stop.is_set():
+        try:
+            _run_rsi_monitor_once()
+        except Exception as exc:
+            with _rsi_monitor_lock:
+                _rsi_monitor_state["last_error"] = str(exc)[:4000]
+        if _rsi_monitor_stop.wait(max(60, RSI_MONITOR_INTERVAL_SEC)):
+            break
+    with _rsi_monitor_lock:
+        _rsi_monitor_state["running"] = False
+
+
+def _start_rsi_monitor_if_needed() -> None:
+    global _rsi_monitor_thread
+    with _rsi_monitor_lock:
+        if _rsi_monitor_thread is not None and _rsi_monitor_thread.is_alive():
+            return
+        _rsi_monitor_stop.clear()
+        _rsi_monitor_thread = threading.Thread(target=_rsi_monitor_loop, name="rsi-monitor", daemon=True)
+        _rsi_monitor_thread.start()
 
 
 def _sanitize_ticker(raw: str | None) -> str:
@@ -761,6 +940,41 @@ def api_history():
                 "range": range_key,
             }
         ), 500
+
+
+@app.get("/api/rsi-monitor/status")
+def api_rsi_monitor_status():
+    ticker = _sanitize_ticker(request.args.get("ticker"))
+    with _rsi_monitor_lock:
+        state = {
+            "running": bool(_rsi_monitor_state.get("running")),
+            "interval_sec": int(_rsi_monitor_state.get("interval_sec") or RSI_MONITOR_INTERVAL_SEC),
+            "last_run_utc": _rsi_monitor_state.get("last_run_utc"),
+            "watchlist": list(_rsi_monitor_state.get("watchlist") or []),
+            "latest": dict(_rsi_monitor_state.get("latest") or {}),
+            "events": list(_rsi_monitor_state.get("events") or []),
+            "last_error": _rsi_monitor_state.get("last_error") or "",
+        }
+    if ticker:
+        state["latest"] = {ticker: state["latest"].get(ticker)}
+        state["events"] = [e for e in state["events"] if str(e.get("ticker")) == ticker]
+    return jsonify(state)
+
+
+@app.post("/api/rsi-monitor/run-once")
+def api_rsi_monitor_run_once():
+    payload = request.get_json(silent=True) or {}
+    requested = payload.get("tickers")
+    if isinstance(requested, list):
+        tickers = [_sanitize_ticker(x) for x in requested]
+        tickers = [t for t in tickers if t]
+    else:
+        single = _sanitize_ticker(payload.get("ticker"))
+        tickers = [single] if single else []
+    if not tickers:
+        tickers = ["QQQ"]
+    result = _run_rsi_monitor_once(force_tickers=tickers)
+    return jsonify({"ok": True, "result": result})
 
 
 if __name__ == "__main__":
