@@ -584,13 +584,11 @@
     </div>
 
     <script>
-      const STORAGE_KEY = "yf_saved_tickers_v1";
+      const STORAGE_KEY = "yf_saved_tickers_v2";
       const MAX_SELECTED = 5;
-      const DEFAULT_TICKERS = [
-        { symbol: "NVDA", selected: true },
-        { symbol: "QQQ", selected: false },
-      ];
+      const DEFAULT_TICKERS = [];
       const COLORS = ["#0284c7", "#dc2626", "#16a34a", "#7c3aed", "#ea580c"];
+      const RSI_COLORS = ["#f59e0b", "#14b8a6", "#ef4444", "#0ea5e9", "#f97316"];
       const MA_STYLES = {
         ma30: { label: "30d MA", color: "#f59e0b" },
         ma90: { label: "90d MA", color: "#8b5cf6" },
@@ -599,7 +597,6 @@
 
       let activeRange = "1m";
       let priceChart = null;
-      let rsiChart = null;
       let tickers = [];
       let importedPortfolios = [];
       let latestLoadSeq = 0;
@@ -2054,8 +2051,56 @@
           ctx.restore();
         },
       };
+
+      const sessionBoundaryPlugin = {
+        id: "sessionBoundaryLine",
+        afterDraw(chart) {
+          if (!chart || chart.canvas?.id !== "priceChart") return;
+          if (activeRange !== "1d") return;
+
+          const xScale = chart?.scales?.x;
+          const area = chart?.chartArea;
+          if (!xScale || !area) return;
+
+          const minMs = Number(xScale.min);
+          const maxMs = Number(xScale.max);
+          if (!Number.isFinite(minMs) || !Number.isFinite(maxMs)) return;
+
+          const tz = "America/New_York";
+          let dayEt = luxon.DateTime.fromMillis(minMs, { zone: "utc" }).setZone(tz).startOf("day");
+          const endEt = luxon.DateTime.fromMillis(maxMs, { zone: "utc" }).setZone(tz).endOf("day");
+          const marks = [];
+
+          while (dayEt <= endEt) {
+            if (dayEt.weekday <= 5) {
+              const openUtc = dayEt.set({ hour: 9, minute: 30, second: 0, millisecond: 0 }).toUTC().toMillis();
+              const closeUtc = dayEt.set({ hour: 16, minute: 0, second: 0, millisecond: 0 }).toUTC().toMillis();
+              if (openUtc >= minMs && openUtc <= maxMs) marks.push({ ts: openUtc, kind: "open" });
+              if (closeUtc >= minMs && closeUtc <= maxMs) marks.push({ ts: closeUtc, kind: "close" });
+            }
+            dayEt = dayEt.plus({ days: 1 });
+          }
+          if (!marks.length) return;
+
+          const { ctx } = chart;
+          ctx.save();
+          marks.forEach((m) => {
+            const x = xScale.getPixelForValue(m.ts);
+            if (!Number.isFinite(x) || x < area.left || x > area.right) return;
+            ctx.beginPath();
+            ctx.setLineDash(m.kind === "open" ? [4, 3] : [2, 4]);
+            ctx.lineWidth = 1;
+            ctx.strokeStyle = m.kind === "open" ? "rgba(22, 163, 74, 0.55)" : "rgba(220, 38, 38, 0.55)";
+            ctx.moveTo(x, area.top);
+            ctx.lineTo(x, area.bottom);
+            ctx.stroke();
+          });
+          ctx.restore();
+        },
+      };
       if (typeof Chart !== "undefined" && Chart?.register) {
         Chart.register(hoverSyncLinePlugin);
+        Chart.register(sessionBoundaryPlugin);
       }
 
       function getPriceTooltipEl() {
@@ -2083,7 +2128,6 @@
         if (!tooltip || tooltip.opacity === 0 || !tooltip.dataPoints || tooltip.dataPoints.length === 0) {
           el.style.opacity = "0";
           hoverSyncTs = null;
-          if (rsiChart) rsiChart.draw();
           return;
         }
 
@@ -2091,7 +2135,6 @@
         const raw = pt.raw || {};
         const dt = raw.x ? new Date(raw.x) : null;
         hoverSyncTs = dt ? dt.getTime() : null;
-        if (rsiChart) rsiChart.draw();
         const dateTxt = dt ? dt.toLocaleString() : "N/A";
         const ticker = String(pt.dataset?.label || "");
         const openVal = raw.open;
@@ -2139,11 +2182,6 @@
         if (!priceChart) return;
         const xScale = priceChart.scales?.x;
         if (!xScale) return;
-        if (rsiChart) {
-          rsiChart.options.scales.x.min = xScale.min;
-          rsiChart.options.scales.x.max = xScale.max;
-          rsiChart.update("none");
-        }
       }
 
       function buildMovingAverageOverlay(pricePoints, maPoints, baseClose) {
@@ -2216,6 +2254,29 @@
         return out;
       }
 
+      function normalizeRsiSeries(rsiSeries, targetSeries) {
+        const src = Array.isArray(rsiSeries) ? rsiSeries : [];
+        const target = Array.isArray(targetSeries) ? targetSeries : [];
+        if (!src.length || !target.length) return [];
+
+        const yVals = target.map((p) => Number(p?.y)).filter((v) => Number.isFinite(v));
+        if (!yVals.length) return [];
+        const minY = Math.min(...yVals);
+        const maxY = Math.max(...yVals);
+        const span = Math.max(maxY - minY, 1e-9);
+
+        return src
+          .map((pt) => {
+            const rsi = Number(pt?.y);
+            if (!Number.isFinite(rsi)) return null;
+            return {
+              x: pt.x,
+              y: minY + (Math.max(0, Math.min(100, rsi)) / 100) * span,
+            };
+          })
+          .filter(Boolean);
+      }
+
       function buildBollingerSeries(series, windowSize = 20, numStd = 2) {
         if (!Array.isArray(series) || series.length < 2) {
           return { upper: [], lower: [] };
@@ -2258,10 +2319,6 @@
 
         if (priceChart) {
           priceChart.destroy();
-        }
-        if (rsiChart) {
-          rsiChart.destroy();
-          rsiChart = null;
         }
 
         const datasets = [];
@@ -2404,6 +2461,67 @@
               isOverlay: true,
             });
           });
+
+          if (showRsi) {
+            const normalizedRsi = normalizeRsiSeries(buildRsiSeries(p.points, 14), series);
+            if (normalizedRsi.length > 0) {
+              datasets.push({
+                label: `${p.ticker} RSI (norm)`,
+                data: normalizedRsi,
+                yAxisID: "y",
+                borderColor: RSI_COLORS[idx % RSI_COLORS.length],
+                borderWidth: 2,
+                fill: false,
+                tension: 0.15,
+                order: 3,
+                pointRadius: 0,
+                pointHoverRadius: 0,
+                pointHitRadius: 0,
+                isOverlay: true,
+              });
+
+              const yVals = series.map((s) => Number(s?.y)).filter((v) => Number.isFinite(v));
+              const minY = yVals.length ? Math.min(...yVals) : null;
+              const maxY = yVals.length ? Math.max(...yVals) : null;
+              const span = (minY != null && maxY != null) ? Math.max(maxY - minY, 1e-9) : null;
+              const firstX = normalizedRsi[0]?.x;
+              const lastX = normalizedRsi[normalizedRsi.length - 1]?.x;
+              if (span != null && firstX && lastX) {
+                const y70 = minY + 0.70 * span;
+                const y30 = minY + 0.30 * span;
+                datasets.push({
+                  label: `${p.ticker} RSI 70`,
+                  data: [{ x: firstX, y: y70 }, { x: lastX, y: y70 }],
+                  yAxisID: "y",
+                  borderColor: "#ef4444",
+                  borderWidth: 1.2,
+                  borderDash: [4, 4],
+                  fill: false,
+                  tension: 0,
+                  order: 4,
+                  pointRadius: 0,
+                  pointHoverRadius: 0,
+                  pointHitRadius: 0,
+                  isReferenceLine: true,
+                });
+                datasets.push({
+                  label: `${p.ticker} RSI 30`,
+                  data: [{ x: firstX, y: y30 }, { x: lastX, y: y30 }],
+                  yAxisID: "y",
+                  borderColor: "#22c55e",
+                  borderWidth: 1.2,
+                  borderDash: [4, 4],
+                  fill: false,
+                  tension: 0,
+                  order: 4,
+                  pointRadius: 0,
+                  pointHoverRadius: 0,
+                  pointHitRadius: 0,
+                  isReferenceLine: true,
+                });
+              }
+            }
+          }
         });
 
         priceChart = new Chart(ctx, {
@@ -2483,88 +2601,7 @@
           },
         });
 
-        if (showRsi) {
-          if (rsiWrapEl) rsiWrapEl.style.display = "block";
-          const rsiCtx = document.getElementById("rsiChart").getContext("2d");
-          const rsiDatasets = payloads
-            .map((p, idx) => ({
-              type: "line",
-              label: `${p.ticker} RSI`,
-              data: buildRsiSeries(p.points, 14),
-              borderColor: COLORS[idx % COLORS.length],
-              borderWidth: 1.8,
-              fill: false,
-              tension: 0.15,
-              pointRadius: 0,
-            }))
-            .filter((d) => Array.isArray(d.data) && d.data.length > 0);
-
-          if (rsiDatasets.length > 0) {
-            const src = rsiDatasets[0].data;
-            const firstX = src[0]?.x;
-            const lastX = src[src.length - 1]?.x;
-            if (firstX && lastX) {
-              rsiDatasets.push({
-                type: "line",
-                label: "RSI 70",
-                data: [{ x: firstX, y: 70 }, { x: lastX, y: 70 }],
-                borderColor: "#ef4444",
-                borderDash: [5, 4],
-                borderWidth: 1,
-                pointRadius: 0,
-                fill: false,
-                isReferenceLine: true,
-              });
-              rsiDatasets.push({
-                type: "line",
-                label: "RSI 30",
-                data: [{ x: firstX, y: 30 }, { x: lastX, y: 30 }],
-                borderColor: "#22c55e",
-                borderDash: [5, 4],
-                borderWidth: 1,
-                pointRadius: 0,
-                fill: false,
-                isReferenceLine: true,
-              });
-            }
-
-            rsiChart = new Chart(rsiCtx, {
-              type: "line",
-              data: { datasets: rsiDatasets },
-              options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                interaction: { mode: "index", intersect: false },
-                plugins: {
-                  legend: {
-                    display: true,
-                    labels: {
-                      filter: (legendItem, data) => {
-                        const ds = data.datasets[legendItem.datasetIndex];
-                        return !ds.isReferenceLine;
-                      },
-                    },
-                  },
-                },
-                scales: {
-                  x: {
-                    type: isMultiDayRange(activeRange) ? "timeseries" : "time",
-                    distribution: isMultiDayRange(activeRange) ? "series" : "linear",
-                    display: false,
-                  },
-                  y: {
-                    min: 0,
-                    max: 100,
-                    ticks: { callback: (v) => formatNumber(v) },
-                  },
-                },
-              },
-            });
-          }
-        }
-        if (!showRsi && rsiWrapEl) {
-          rsiWrapEl.style.display = "none";
-        }
+        if (rsiWrapEl) rsiWrapEl.style.display = "none";
         syncVolumeWindowFromPrice();
       }
 
@@ -2631,10 +2668,6 @@
 
         if (selected.length === 0) {
           if (priceChart) priceChart.destroy();
-          if (rsiChart) {
-            rsiChart.destroy();
-            rsiChart = null;
-          }
           latestPayloadByTicker = {};
           meta.textContent = "Select at least one ticker.";
           updatePressureState([]);
@@ -2665,10 +2698,6 @@
 
         if (nonEmpty.length === 0) {
           if (priceChart) priceChart.destroy();
-          if (rsiChart) {
-            rsiChart.destroy();
-            rsiChart = null;
-          }
           meta.textContent = "No data returned for selected tickers.";
           const skipped = [
             ...emptyTickers.map((t) => `${t}: no data for selected range`),
@@ -2769,7 +2798,7 @@
       if (rsiToggleEl) {
         rsiToggleEl.addEventListener("change", () => {
           showRsi = !!rsiToggleEl.checked;
-          if (rsiWrapEl) rsiWrapEl.style.display = showRsi ? "block" : "none";
+          if (rsiWrapEl) rsiWrapEl.style.display = "none";
           const selectedSymbols = getSelectedSymbols();
           const payloads = selectedSymbols
             .map((symbol) => latestPayloadByTicker[symbol])
