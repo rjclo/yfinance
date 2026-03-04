@@ -603,6 +603,7 @@
       let pressureByTicker = {};
       let overallPressure = null;
       let scaleMode = "auto";
+      const dataSource = "twelve_data";
       let resolvedScaleMode = "price";
       let portfoliosDirty = false;
       let latestPayloadByTicker = {};
@@ -1915,6 +1916,7 @@
         scaleButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.scale === mode));
       }
 
+
       function computePriceRatio(payloads) {
         let minClose = Number.POSITIVE_INFINITY;
         let maxClose = 0;
@@ -2300,12 +2302,47 @@
         return { upper, lower };
       }
 
+      function expectedBarMs(rangeKey) {
+        const m = {
+          "1d": 60 * 1000,
+          "1w": 5 * 60 * 1000,
+          "1m": 15 * 60 * 1000,
+          "3m": 60 * 60 * 1000,
+          "1y": 24 * 60 * 60 * 1000,
+          "max": 24 * 60 * 60 * 1000,
+        };
+        return m[rangeKey] || 60 * 1000;
+      }
+
+      function breakSeriesOnGaps(points, rangeKey) {
+        const src = Array.isArray(points) ? points : [];
+        if (src.length <= 1) return src;
+        const thresholdMs = expectedBarMs(rangeKey) * 8;
+        const out = [src[0]];
+        for (let i = 1; i < src.length; i += 1) {
+          const prev = src[i - 1];
+          const curr = src[i];
+          const prevMs = Date.parse(String(prev?.x || ""));
+          const currMs = Date.parse(String(curr?.x || ""));
+          if (Number.isFinite(prevMs) && Number.isFinite(currMs) && (currMs - prevMs) > thresholdMs) {
+            out.push({ x: new Date(prevMs + 1).toISOString(), y: null });
+          }
+          out.push(curr);
+        }
+        return out;
+      }
+
       async function fetchTickerData(symbol) {
         try {
-          const res = await fetch(`/api/history?ticker=${encodeURIComponent(symbol)}&range=${encodeURIComponent(activeRange)}`);
+          const res = await fetch(
+            `/api/history?ticker=${encodeURIComponent(symbol)}&range=${encodeURIComponent(activeRange)}`
+          );
           const payload = await res.json();
           if (!res.ok) {
-            throw new Error(`${symbol}: ${payload.error || "Request failed."}`);
+            const detail = [payload.error || "Request failed.", payload.hint || "", payload.provider_used ? `provider=${payload.provider_used}` : ""]
+              .filter(Boolean)
+              .join(" | ");
+            throw new Error(`${symbol}: ${detail}`);
           }
           return payload;
         } catch (err) {
@@ -2347,6 +2384,7 @@
             };
           });
           if (series.length === 0) return;
+          const displaySeries = breakSeriesOnGaps(series, activeRange);
 
           datasets.push({
             type: "bar",
@@ -2367,7 +2405,7 @@
 
           datasets.push({
             label: p.ticker,
-            data: series,
+            data: displaySeries,
             yAxisID: "y",
             borderColor: color,
             backgroundColor: `${color}22`,
@@ -2387,7 +2425,7 @@
           if (showBands && bands.upper.length > 0 && bands.lower.length > 0) {
             datasets.push({
               label: `${p.ticker} upper`,
-              data: bands.upper,
+              data: breakSeriesOnGaps(bands.upper, activeRange),
               yAxisID: "y",
               borderColor: hexToRgba(color, 0.65),
               borderDash: [4, 4],
@@ -2402,7 +2440,7 @@
             });
             datasets.push({
               label: `${p.ticker} lower`,
-              data: bands.lower,
+              data: breakSeriesOnGaps(bands.lower, activeRange),
               yAxisID: "y",
               borderColor: hexToRgba(color, 0.65),
               borderDash: [4, 4],
@@ -2447,7 +2485,7 @@
             if (!maSeries.length) return;
             datasets.push({
               label: `${p.ticker} ${style.label}`,
-              data: maSeries,
+              data: breakSeriesOnGaps(maSeries, activeRange),
               yAxisID: "y",
               borderColor: style.color,
               borderWidth: 1.5,
@@ -2467,7 +2505,7 @@
             if (normalizedRsi.length > 0) {
               datasets.push({
                 label: `${p.ticker} RSI (norm)`,
-                data: normalizedRsi,
+                data: breakSeriesOnGaps(normalizedRsi, activeRange),
                 yAxisID: "y",
                 borderColor: RSI_COLORS[idx % RSI_COLORS.length],
                 borderWidth: 2,
@@ -2723,7 +2761,7 @@
               })
               .join(" | ");
 
-        meta.textContent = `range: ${activeRange} | scale: ${resolvedScaleMode} | loaded ${nonEmpty.length}/${selected.length} | ${summary}`;
+        meta.textContent = `range: ${activeRange} | scale: ${resolvedScaleMode} | source: twelve_data | loaded ${nonEmpty.length}/${selected.length} | ${summary}`;
         const skipped = [
           ...emptyTickers.map((t) => `${t}: no data for selected range`),
           ...failures,

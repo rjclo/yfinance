@@ -16,7 +16,7 @@ from typing import Dict, Tuple
 import pandas as pd
 from flask import Flask, g, jsonify, render_template, request
 
-from fetch_market_data import fetch_price_history
+from fetch_market_data import diagnose_source_failure, fetch_price_history_by_source
 
 app = Flask(__name__)
 
@@ -58,6 +58,8 @@ _rsi_monitor_state: dict = {
     "events": [],
     "last_error": "",
 }
+_history_cache_lock = threading.Lock()
+_history_cache: dict[tuple[str, str, str, bool, str], dict] = {}
 
 
 def _ensure_portfolio_storage() -> None:
@@ -188,7 +190,13 @@ def _compute_rsi_points(close_df: pd.DataFrame, period: int = RSI_PERIOD) -> lis
 
 
 def _analyze_intraday_rsi(ticker: str) -> dict:
-    df = fetch_price_history(ticker=ticker, period="1d", interval="1m", prepost=True)
+    df, _ = fetch_price_history_by_source(
+        ticker=ticker,
+        period="1d",
+        interval="1m",
+        prepost=True,
+        source="twelve_data",
+    )
     close_df = _extract_close_series(df)
     points = _compute_rsi_points(close_df, period=RSI_PERIOD)
     latest = points[-1] if points else None
@@ -638,6 +646,49 @@ def _to_moving_average_points(df: pd.DataFrame, windows: dict[str, int]) -> dict
     return out
 
 
+def _fetch_price_history_cached(
+    ticker: str,
+    period: str,
+    interval: str,
+    prepost: bool = False,
+    source: str = "auto",
+    ttl_sec: int = 60,
+    stale_ttl_sec: int = 6 * 3600,
+) -> tuple[pd.DataFrame, str]:
+    key = (ticker, period, interval, bool(prepost), (source or "auto").strip().lower())
+    now = time.time()
+    hit = None
+    with _history_cache_lock:
+        hit = _history_cache.get(key)
+        if hit is not None and (now - float(hit.get("at", 0.0))) < max(1, ttl_sec):
+            cached_df = hit.get("df")
+            if isinstance(cached_df, pd.DataFrame):
+                return cached_df.copy(), str(hit.get("provider") or "cache")
+    df, provider = fetch_price_history_by_source(
+        ticker=ticker,
+        period=period,
+        interval=interval,
+        prepost=prepost,
+        source=source,
+    )
+    if not df.empty:
+        with _history_cache_lock:
+            _history_cache[key] = {"at": now, "df": df.copy(), "provider": provider}
+        return df, provider
+
+    # Upstream can intermittently fail (TLS/rate-limit). Reuse stale successful cache when available.
+    if hit is not None:
+        cached_df = hit.get("df")
+        cached_at = float(hit.get("at", 0.0))
+        if (
+            isinstance(cached_df, pd.DataFrame)
+            and not cached_df.empty
+            and (now - cached_at) < max(60, stale_ttl_sec)
+        ):
+            return cached_df.copy(), str(hit.get("provider") or "cache_stale")
+    return df, provider
+
+
 _setup_logging()
 
 
@@ -896,26 +947,72 @@ def api_save_portfolios():
 def api_history():
     ticker = (request.args.get("ticker") or "NVDA").strip().upper()
     range_key = (request.args.get("range") or "1m").strip().lower()
+    source = "twelve_data"
 
     if not ticker:
         return jsonify({"error": "Ticker is required."}), 400
 
     if range_key not in RANGE_MAP:
         return jsonify({"error": f"Unsupported range '{range_key}'."}), 400
-
     period, interval = RANGE_MAP[range_key]
     use_prepost = range_key == "1d"
 
     try:
-        df = fetch_price_history(ticker=ticker, period=period, interval=interval, prepost=use_prepost)
+        df, provider_used = _fetch_price_history_cached(
+            ticker=ticker,
+            period=period,
+            interval=interval,
+            prepost=use_prepost,
+            source=source,
+            ttl_sec=30 if range_key == "1d" else 90,
+        )
         if df.empty and range_key == "1d":
-            df = fetch_price_history(ticker=ticker, period="1d", interval="5m", prepost=True)
+            df, provider_used = _fetch_price_history_cached(
+                ticker=ticker,
+                period="1d",
+                interval="5m",
+                prepost=True,
+                source=source,
+                ttl_sec=30,
+            )
 
         points = _to_chart_points(df)
+        if not points:
+            extra_hint = ""
+            if not os.getenv("TWELVE_DATA_API_KEY", "").strip():
+                extra_hint = " TWELVE_DATA_API_KEY is not set in this server process."
+            diagnosis = diagnose_source_failure(ticker=ticker, period=period, interval=interval, source=source)
+            if diagnosis:
+                extra_hint = f"{extra_hint} {diagnosis}".strip()
+            return jsonify(
+                {
+                    "error": "No market data returned from upstream provider.",
+                    "hint": (
+                        "Upstream may be rate-limiting (HTTP 429) or TLS/certificate connectivity may be failing."
+                        + extra_hint
+                    ),
+                    "ticker": ticker,
+                    "range": range_key,
+                    "period": period,
+                    "interval": interval,
+                    "source": source,
+                    "provider_used": provider_used,
+                    "count": 0,
+                    "points": [],
+                    "as_of_utc": datetime.now(timezone.utc).isoformat(),
+                }
+            ), 502
         ma_windows = {"ma30": 30, "ma90": 90, "ma1y": 252}
         ma_points: dict[str, list[dict]] = {}
         try:
-            daily_df = fetch_price_history(ticker=ticker, period="2y", interval="1d")
+            daily_df, _ = _fetch_price_history_cached(
+                ticker=ticker,
+                period="2y",
+                interval="1d",
+                prepost=False,
+                source=source,
+                ttl_sec=3600,
+            )
             ma_points = _to_moving_average_points(daily_df, ma_windows)
         except Exception:
             ma_points = {}
@@ -925,6 +1022,8 @@ def api_history():
                 "range": range_key,
                 "period": period,
                 "interval": interval,
+                "source": source,
+                "provider_used": provider_used,
                 "count": len(points),
                 "points": points,
                 "moving_averages": ma_points,

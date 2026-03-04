@@ -1,140 +1,184 @@
 #!/usr/bin/env python3
 """
-Starter script for pulling market + EPS-related data with yfinance.
-
-Examples:
-  python fetch_market_data.py
-  python fetch_market_data.py --tickers NVDA QQQ --period 2y --interval 1d --save-csv
+Market data helpers using Twelve Data only.
 """
 
 from __future__ import annotations
 
 import argparse
+import io
+import os
 from pathlib import Path
-from threading import Lock
-from typing import Any
 
 import pandas as pd
-import yfinance as yf
+import requests
+import urllib3
+from urllib3.exceptions import InsecureRequestWarning
 
-_YF_DOWNLOAD_LOCK = Lock()
-
-
-def fetch_price_history(ticker: str, period: str, interval: str, prepost: bool = False) -> pd.DataFrame:
-    """Return OHLCV price history for one ticker."""
-
-    def _download(symbol: str) -> pd.DataFrame:
-        with _YF_DOWNLOAD_LOCK:
-            return yf.download(
-                tickers=symbol,
-                period=period,
-                interval=interval,
-                prepost=prepost,
-                auto_adjust=False,
-                progress=False,
-                group_by="ticker",
-                threads=False,
-            )
-
-    def _prepare(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
-        # yfinance can return multi-index columns with ticker at level 0 or 1.
-        if isinstance(df.columns, pd.MultiIndex):
-            extracted = None
-            for level in range(df.columns.nlevels):
-                if symbol in df.columns.get_level_values(level):
-                    extracted = df.xs(symbol, axis=1, level=level, drop_level=True)
-                    break
-            if extracted is not None:
-                df = extracted.copy()
-            else:
-                df.columns = ["_".join(map(str, c)).strip() for c in df.columns.to_flat_index()]
-
-        if df.empty:
-            return df
-
-        df = df.reset_index()
-        # yfinance may return Date (daily) or Datetime (intraday) index columns.
-        for candidate in ("date", "Date", "Datetime", "index"):
-            if candidate in df.columns:
-                if candidate != "date":
-                    df = df.rename(columns={candidate: "date"})
-                break
-
-        if "date" not in df.columns:
-            raise ValueError(f"Timestamp column not found. Columns={list(df.columns)}")
-
-        return df
-
-    candidates = [ticker]
-    # Common Yahoo class-share formatting fallback, e.g. BRKB -> BRK-B / BRK.B.
-    if "/" in ticker:
-        candidates.append(ticker.replace("/", "-"))
-    if "-" not in ticker and "." not in ticker and len(ticker) >= 4:
-        candidates.append(f"{ticker[:-1]}-{ticker[-1]}")
-        candidates.append(f"{ticker[:-1]}.{ticker[-1]}")
-
-    seen = set()
-    for symbol in candidates:
-        if symbol in seen:
-            continue
-        seen.add(symbol)
-        raw = _download(symbol)
-        prepared = _prepare(raw, symbol)
-        if not prepared.empty:
-            prepared["ticker"] = symbol
-            return prepared
-
-    return pd.DataFrame()
+_HTTP_TIMEOUT_SEC = float(os.getenv("MARKET_HTTP_TIMEOUT_SEC", "15"))
+_MARKET_INSECURE_SSL = os.getenv("MARKET_INSECURE_SSL", "0").strip().lower() in {"1", "true", "yes", "on"}
+if _MARKET_INSECURE_SSL:
+    urllib3.disable_warnings(InsecureRequestWarning)
 
 
-def _safe_get(d: dict[str, Any], key: str) -> Any:
-    return d.get(key) if isinstance(d, dict) else None
+def _http_verify() -> bool:
+    return not _MARKET_INSECURE_SSL
 
 
-def fetch_fundamentals(ticker: str) -> pd.DataFrame:
-    """Return a one-row DataFrame of common fundamental/EPS fields."""
-    tk = yf.Ticker(ticker)
-    info = tk.info or {}
+def _get_twelve_data_api_key() -> str:
+    return os.getenv("TWELVE_DATA_API_KEY", "").strip()
 
-    row = {
-        "ticker": ticker,
-        "short_name": _safe_get(info, "shortName"),
-        "sector": _safe_get(info, "sector"),
-        "industry": _safe_get(info, "industry"),
-        "currency": _safe_get(info, "currency"),
-        "market_cap": _safe_get(info, "marketCap"),
-        "trailing_eps": _safe_get(info, "trailingEps"),
-        "forward_eps": _safe_get(info, "forwardEps"),
-        "trailing_pe": _safe_get(info, "trailingPE"),
-        "forward_pe": _safe_get(info, "forwardPE"),
-        "price_to_book": _safe_get(info, "priceToBook"),
-        "dividend_yield": _safe_get(info, "dividendYield"),
+
+def _period_to_days(period: str) -> int | None:
+    text = (period or "").strip().lower()
+    if text == "max":
+        return None
+    if text.endswith("d"):
+        return int(text[:-1] or "0")
+    if text.endswith("mo"):
+        return int(text[:-2] or "0") * 30
+    if text.endswith("y"):
+        return int(text[:-1] or "0") * 365
+    return None
+
+
+def _interval_to_twelve(interval: str) -> str | None:
+    m = {
+        "1m": "1min",
+        "5m": "5min",
+        "15m": "15min",
+        "1h": "1h",
+        "1d": "1day",
+    }
+    return m.get((interval or "").strip().lower())
+
+
+def _fetch_twelve_data(ticker: str, period: str, interval: str) -> pd.DataFrame:
+    api_key = _get_twelve_data_api_key()
+    if not api_key:
+        return pd.DataFrame()
+
+    twelve_interval = _interval_to_twelve(interval)
+    if not twelve_interval:
+        return pd.DataFrame()
+
+    params = {
+        "symbol": ticker,
+        "interval": twelve_interval,
+        "apikey": api_key,
+        "outputsize": 5000,
+        "format": "JSON",
     }
 
-    return pd.DataFrame([row])
-
-
-def fetch_earnings_dates(ticker: str, limit: int = 8) -> pd.DataFrame:
-    """Return recent/pending earnings dates + EPS estimates/actuals when available."""
-    tk = yf.Ticker(ticker)
     try:
-        df = tk.get_earnings_dates(limit=limit)
+        resp = requests.get(
+            "https://api.twelvedata.com/time_series",
+            params=params,
+            timeout=_HTTP_TIMEOUT_SEC,
+            verify=_http_verify(),
+        )
+        if resp.status_code != 200:
+            return pd.DataFrame()
+        payload = resp.json() or {}
     except Exception:
         return pd.DataFrame()
 
-    if df is None or df.empty:
+    values = payload.get("values")
+    if not isinstance(values, list) or not values:
         return pd.DataFrame()
 
-    df = df.reset_index().rename(columns={"Earnings Date": "earnings_date"})
+    rows = []
+    for v in values:
+        if not isinstance(v, dict):
+            continue
+        rows.append(
+            {
+                "date": v.get("datetime"),
+                "Open": v.get("open"),
+                "High": v.get("high"),
+                "Low": v.get("low"),
+                "Close": v.get("close"),
+                "Volume": v.get("volume"),
+            }
+        )
+
+    if not rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(rows)
+    df["date"] = pd.to_datetime(df["date"], utc=True, errors="coerce")
+    for c in ("Open", "High", "Low", "Close", "Volume"):
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df = df.dropna(subset=["date", "Close"]).sort_values("date")
+
+    keep_days = _period_to_days(period)
+    if keep_days is not None and keep_days > 0 and not df.empty:
+        cutoff = df["date"].max() - pd.Timedelta(days=keep_days + 2)
+        df = df[df["date"] >= cutoff]
+
+    if df.empty:
+        return pd.DataFrame()
+
     df["ticker"] = ticker
-    return df
+    return df.reset_index(drop=True)
+
+
+def fetch_price_history_by_source(
+    ticker: str,
+    period: str,
+    interval: str,
+    prepost: bool = False,
+    source: str = "twelve_data",
+) -> tuple[pd.DataFrame, str]:
+    del prepost, source  # Twelve Data path only.
+    df = _fetch_twelve_data(ticker=ticker, period=period, interval=interval)
+    if not df.empty:
+        return df, "twelve_data"
+    return pd.DataFrame(), "none"
+
+
+def diagnose_source_failure(ticker: str, period: str, interval: str, source: str = "twelve_data") -> str:
+    del period, source
+    api_key = _get_twelve_data_api_key()
+    if not api_key:
+        return "TWELVE_DATA_API_KEY is not set in server process."
+
+    twelve_interval = _interval_to_twelve(interval)
+    if twelve_interval is None:
+        return f"Twelve Data interval not supported: {interval}"
+
+    params = {
+        "symbol": ticker,
+        "interval": twelve_interval,
+        "apikey": api_key,
+        "outputsize": 2,
+        "format": "JSON",
+    }
+    try:
+        r = requests.get(
+            "https://api.twelvedata.com/time_series",
+            params=params,
+            timeout=_HTTP_TIMEOUT_SEC,
+            verify=_http_verify(),
+        )
+        if r.status_code != 200:
+            return f"Twelve Data HTTP {r.status_code}."
+        payload = r.json() or {}
+        if isinstance(payload, dict) and not isinstance(payload.get("values"), list):
+            code = str(payload.get("code") or "")
+            msg = str(payload.get("message") or payload.get("status") or "no values")
+            return f"Twelve Data: {code} {msg}".strip()
+    except Exception as exc:
+        return f"Twelve Data request failed: {exc.__class__.__name__}"
+
+    return "Twelve Data returned no values for this request."
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Fetch historical + EPS-related data with yfinance.")
-    parser.add_argument("--tickers", nargs="+", default=["NVDA", "QQQ"], help="Ticker list.")
-    parser.add_argument("--period", default="1y", help="History window, e.g. 6mo, 1y, 5y, max.")
-    parser.add_argument("--interval", default="1d", help="Data interval, e.g. 1d, 1wk, 1mo.")
+    parser = argparse.ArgumentParser(description="Fetch historical data from Twelve Data.")
+    parser.add_argument("--tickers", nargs="+", default=["QQQ"], help="Ticker list.")
+    parser.add_argument("--period", default="1mo", help="History window, e.g. 1d, 1mo, 1y, max.")
+    parser.add_argument("--interval", default="15m", help="Data interval, e.g. 1m, 5m, 15m, 1h, 1d.")
     parser.add_argument("--save-csv", action="store_true", help="Save results into ./data/")
     return parser.parse_args()
 
@@ -144,40 +188,18 @@ def main() -> None:
     tickers = [t.upper() for t in args.tickers]
 
     all_history: list[pd.DataFrame] = []
-    all_fundamentals: list[pd.DataFrame] = []
-    all_earnings_dates: list[pd.DataFrame] = []
-
     for ticker in tickers:
-        history_df = fetch_price_history(ticker, args.period, args.interval)
-        fundamentals_df = fetch_fundamentals(ticker)
-        earnings_dates_df = fetch_earnings_dates(ticker)
-
-        all_history.append(history_df)
-        all_fundamentals.append(fundamentals_df)
-        all_earnings_dates.append(earnings_dates_df)
+        df, _ = fetch_price_history_by_source(ticker=ticker, period=args.period, interval=args.interval)
+        all_history.append(df)
 
     history = pd.concat(all_history, ignore_index=True) if all_history else pd.DataFrame()
-    fundamentals = pd.concat(all_fundamentals, ignore_index=True) if all_fundamentals else pd.DataFrame()
-    earnings_dates = (
-        pd.concat(all_earnings_dates, ignore_index=True) if all_earnings_dates else pd.DataFrame()
-    )
-
-    print("\n=== Price/Volume History (sample) ===")
     print(history.head(10).to_string(index=False) if not history.empty else "No history data.")
-
-    print("\n=== Fundamentals (includes EPS fields) ===")
-    print(fundamentals.to_string(index=False) if not fundamentals.empty else "No fundamentals data.")
-
-    print("\n=== Earnings Dates / EPS surprises (if available) ===")
-    print(earnings_dates.head(10).to_string(index=False) if not earnings_dates.empty else "No earnings dates data.")
 
     if args.save_csv:
         out_dir = Path("data")
         out_dir.mkdir(parents=True, exist_ok=True)
         history.to_csv(out_dir / "history.csv", index=False)
-        fundamentals.to_csv(out_dir / "fundamentals.csv", index=False)
-        earnings_dates.to_csv(out_dir / "earnings_dates.csv", index=False)
-        print(f"\nSaved CSV files under: {out_dir.resolve()}")
+        print(f"Saved CSV under: {out_dir.resolve()}")
 
 
 if __name__ == "__main__":
