@@ -809,7 +809,10 @@
           b.addEventListener('contextmenu', (ev) => {
             ev.preventDefault();
             logAction("left_tab_context_open", { tab_id: c.id, name: c.name });
-            renameLeftCategoryById(c.id);
+            openRowActionsMenu(ev.clientX, ev.clientY, [
+              { label: "Rename", onClick: () => renameLeftCategoryById(c.id) },
+              { label: "Delete", onClick: () => deleteLeftCategory(c.id) },
+            ]);
           });
           leftTabsEl.appendChild(b);
         });
@@ -820,16 +823,6 @@
         addTab.className = 'chrome-tab add-tab';
         addTab.addEventListener('click', addLeftCategory);
         leftTabsEl.appendChild(addTab);
-
-        const menuTab = document.createElement('button');
-        menuTab.type = 'button';
-        menuTab.className = 'chrome-tab menu-tab';
-        menuTab.innerHTML = '&#8942;';
-        menuTab.addEventListener('click', (ev) => {
-          ev.stopPropagation();
-          openPanelActionsMenu("left", ev.clientX, ev.clientY);
-        });
-        leftTabsEl.appendChild(menuTab);
       }
 
       function renameLeftCategoryById(tabId) {
@@ -905,6 +898,24 @@
         queueLeftCategoriesAutoSave("add_tab");
       }
 
+      function deleteLeftCategory(tabId) {
+        const target = leftCategories.find((c) => c.id === tabId);
+        if (!target) return;
+        if (target.id === 'default') {
+          window.alert('Cannot delete the default tab.');
+          return;
+        }
+        if (!window.confirm(`Delete tab "${target.name}"? Its tickers will be removed.`)) return;
+        leftCategories = leftCategories.filter((c) => c.id !== tabId);
+        if (activeLeftCategoryId === tabId) {
+          activeLeftCategoryId = leftCategories.length ? leftCategories[0].id : 'default';
+        }
+        renderLeftTabs();
+        renderTickerList();
+        logAction("left_tab_delete", { tab_id: tabId, name: target.name });
+        queueLeftCategoriesAutoSave("delete_tab");
+      }
+
       function addHoldingToCategories(holding, tabIds) {
         const ids = Array.isArray(tabIds) ? tabIds : [];
         if (!holding?.symbol || ids.length === 0) return;
@@ -963,23 +974,29 @@
         const menu = document.createElement("div");
         menu.className = "tab-actions-menu";
 
-        const saveBtn = document.createElement("button");
-        saveBtn.type = "button";
-        saveBtn.className = "tab-actions-item";
-        saveBtn.textContent = "Save";
-        saveBtn.addEventListener("click", () => {
-          if (kind === "left") {
-            logAction("left_tab_menu_save_click", {});
-            saveLeftCategories();
-          } else {
+        if (kind === "left") {
+          const deleteBtn = document.createElement("button");
+          deleteBtn.type = "button";
+          deleteBtn.className = "tab-actions-item";
+          deleteBtn.textContent = "Delete tab";
+          deleteBtn.addEventListener("click", () => {
+            closePanelActionsMenu();
+            deleteLeftCategory(activeLeftCategoryId);
+          });
+          menu.appendChild(deleteBtn);
+        } else {
+          const saveBtn = document.createElement("button");
+          saveBtn.type = "button";
+          saveBtn.className = "tab-actions-item";
+          saveBtn.textContent = "Save";
+          saveBtn.addEventListener("click", () => {
             logAction("right_tab_menu_save_click", { portfolio_count: importedPortfolios.length });
             saveImportedPortfoliosToServer();
-          }
-          closePanelActionsMenu();
-          closeRowActionsMenu();
-        });
-
-        menu.appendChild(saveBtn);
+            closePanelActionsMenu();
+            closeRowActionsMenu();
+          });
+          menu.appendChild(saveBtn);
+        }
 
         menu.style.left = String(Math.max(8, x)) + "px";
         menu.style.top = String(Math.max(8, y)) + "px";
