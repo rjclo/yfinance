@@ -604,6 +604,27 @@ def _to_chart_points(df: pd.DataFrame) -> list[dict]:
     return points
 
 
+def _filter_regular_session_points(points: list[dict]) -> list[dict]:
+    out_with_day: list[tuple[dict, str]] = []
+    for pt in points:
+        ts = pt.get("t")
+        dt = pd.to_datetime(ts, utc=True, errors="coerce")
+        if pd.isna(dt):
+            continue
+        dt_et = dt.tz_convert("America/New_York")
+        if dt_et.weekday() >= 5:
+            continue
+        mins = dt_et.hour * 60 + dt_et.minute
+        if (9 * 60 + 30) <= mins <= (16 * 60):
+            out_with_day.append((pt, dt_et.strftime("%Y-%m-%d")))
+
+    if not out_with_day:
+        return []
+
+    latest_day = max(day for _, day in out_with_day)
+    return [pt for pt, day in out_with_day if day == latest_day]
+
+
 def _to_moving_average_points(df: pd.DataFrame, windows: dict[str, int]) -> dict[str, list[dict]]:
     if df.empty or not windows:
         return {}
@@ -977,6 +998,8 @@ def api_history():
             )
 
         points = _to_chart_points(df)
+        if range_key == "1d":
+            points = _filter_regular_session_points(points)
         if not points:
             extra_hint = ""
             if not os.getenv("TWELVE_DATA_API_KEY", "").strip():
@@ -1002,7 +1025,7 @@ def api_history():
                     "as_of_utc": datetime.now(timezone.utc).isoformat(),
                 }
             ), 502
-        ma_windows = {"ma30": 30, "ma90": 90, "ma1y": 252}
+        ma_windows = {"ma50": 50, "ma200": 200}
         ma_points: dict[str, list[dict]] = {}
         try:
             daily_df, _ = _fetch_price_history_cached(
