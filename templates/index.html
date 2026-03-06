@@ -446,6 +446,32 @@
         color: #334155;
       }
 
+      .trend-legend {
+        margin-top: 6px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        font-size: 12px;
+        color: #334155;
+      }
+
+      .trend-legend-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 3px 8px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: #fff;
+      }
+
+      .trend-legend-swatch {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        border: 1px solid rgba(15, 23, 42, 0.18);
+      }
+
       .chart-wrap {
         margin-top: 16px;
         height: 460px;
@@ -491,6 +517,79 @@
         font-size: 16px;
         line-height: 1;
         z-index: 8;
+      }
+
+      .chart-sensitivity {
+        position: absolute;
+        top: 8px;
+        right: 48px;
+        width: 160px;
+        z-index: 8;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 8px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.92);
+      }
+
+      .chart-sensitivity label {
+        font-size: 11px;
+        color: #334155;
+        white-space: nowrap;
+      }
+
+      .chart-sensitivity input[type="range"] {
+        width: 92px;
+        -webkit-appearance: none;
+        appearance: none;
+        height: 8px;
+        border-radius: 999px;
+        background: linear-gradient(to right, #ef4444 0%, #ef4444 var(--pct, 50%), #1f2937 var(--pct, 50%), #1f2937 100%);
+        outline: none;
+        box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.28);
+      }
+
+      .chart-sensitivity input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: #ef4444;
+        border: 1px solid #b91c1c;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+        cursor: pointer;
+      }
+
+      .chart-sensitivity input[type="range"]::-moz-range-track {
+        height: 8px;
+        border-radius: 999px;
+        background: #1f2937;
+      }
+
+      .chart-sensitivity input[type="range"]::-moz-range-progress {
+        height: 8px;
+        border-radius: 999px;
+        background: #ef4444;
+      }
+
+      .chart-sensitivity input[type="range"]::-moz-range-thumb {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: #ef4444;
+        border: 1px solid #b91c1c;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+        cursor: pointer;
+      }
+
+      .chart-sensitivity-value {
+        font-size: 11px;
+        color: #0f172a;
+        min-width: 28px;
+        text-align: right;
       }
 
       .chart-fs-btn::after {
@@ -672,11 +771,12 @@
             <input id="tickerInput" class="ticker-input" placeholder="Add ticker" maxlength="12" />
             <button id="addBtn" class="primary">Add Ticker</button>
             <button class="range-btn active" data-range="1d">1day</button>
-            <button class="range-btn" data-range="1w">1week</button>
+            <button class="range-btn" data-range="1w">10days</button>
             <button class="range-btn" data-range="1m">1month</button>
             <button class="range-btn" data-range="3m">3month</button>
             <button class="range-btn" data-range="1y">1year</button>
             <button class="range-btn" data-range="max">max</button>
+            <button id="refreshBtn" type="button">Refresh</button>
             <button class="scale-btn active" data-scale="auto">auto</button>
             <button class="scale-btn" data-scale="price">price</button>
             <button class="scale-btn" data-scale="percent">%change</button>
@@ -694,6 +794,11 @@
           <div class="alerts" id="confluenceAlerts"></div>
 
           <div class="chart-wrap">
+            <div class="chart-sensitivity" title="Trend sensitivity: left=fewer bands, right=more bands">
+              <label for="trendSensitivity">Sensitivity</label>
+              <input id="trendSensitivity" type="range" min="0" max="100" step="1" value="50" />
+              <span id="trendSensitivityValue" class="chart-sensitivity-value">50</span>
+            </div>
             <button id="fullscreenBtn" class="chart-fs-btn" type="button" data-tooltip="Entire Screen" aria-label="Entire Screen">&#x26F6;</button>
             <div class="chart-zoom-controls">
               <button id="zoomInBtn" class="chart-zoom-btn" type="button" aria-label="Zoom In">+</button>
@@ -717,7 +822,9 @@
 
     <script>
       const STORAGE_KEY = "yf_saved_tickers_v2";
+      const AUTO_REFRESH_KEY = "yf_auto_refresh_5m";
       const MAX_SELECTED = 5;
+      const AUTO_REFRESH_MS = 5 * 60 * 1000;
       const DEFAULT_TICKERS = [];
       const COLORS = ["#0284c7", "#dc2626", "#16a34a", "#7c3aed", "#ea580c"];
       const RSI_COLORS = ["#f59e0b", "#14b8a6", "#ef4444", "#0ea5e9", "#f97316"];
@@ -749,11 +856,17 @@
       let maVisibility = { ma50: false, ma200: false };
       let showRsi = false;
       let showMacd = false;
+      let trendSensitivity = 50;
+      let autoRefreshEnabled = false;
+      let autoRefreshTimer = null;
 
       const tickerInput = document.getElementById("tickerInput");
       const addBtn = document.getElementById("addBtn");
       const centerMenuBtn = document.getElementById("centerMenuBtn");
+      const refreshBtn = document.getElementById("refreshBtn");
       const fullscreenBtn = document.getElementById("fullscreenBtn");
+      const trendSensitivityEl = document.getElementById("trendSensitivity");
+      const trendSensitivityValueEl = document.getElementById("trendSensitivityValue");
       const zoomInBtn = document.getElementById("zoomInBtn");
       const resetZoomBtn = document.getElementById("resetZoomBtn");
       const zoomOutBtn = document.getElementById("zoomOutBtn");
@@ -811,6 +924,35 @@
         } catch (_) {
           // no-op: logging must never break UI behavior
         }
+      }
+
+      function stopAutoRefreshTimer() {
+        if (autoRefreshTimer) {
+          clearInterval(autoRefreshTimer);
+          autoRefreshTimer = null;
+        }
+      }
+
+      function startAutoRefreshTimer() {
+        stopAutoRefreshTimer();
+        if (!autoRefreshEnabled) return;
+        autoRefreshTimer = setInterval(() => {
+          const selected = getSelectedSymbols();
+          if (!selected.length) return;
+          logAction("auto_refresh_tick", { range: activeRange, symbols: selected.slice(0, 8) });
+          loadData(true);
+        }, AUTO_REFRESH_MS);
+      }
+
+      function setAutoRefreshEnabled(enabled) {
+        autoRefreshEnabled = !!enabled;
+        localStorage.setItem(AUTO_REFRESH_KEY, autoRefreshEnabled ? "1" : "0");
+        if (autoRefreshEnabled) {
+          startAutoRefreshTimer();
+        } else {
+          stopAutoRefreshTimer();
+        }
+        logAction("auto_refresh_toggle", { enabled: autoRefreshEnabled, interval_ms: AUTO_REFRESH_MS });
       }
 
       function isFullscreenActive() {
@@ -2394,6 +2536,18 @@
         return dt.toFormat("MMM d");
       }
 
+      function getRangeLabel(rangeKey) {
+        const m = {
+          "1d": "1day",
+          "1w": "10days",
+          "1m": "1month",
+          "3m": "3month",
+          "1y": "1year",
+          "max": "max",
+        };
+        return m[String(rangeKey || "").toLowerCase()] || String(rangeKey || "");
+      }
+
       function hexToRgba(hex, alpha) {
         const clean = (hex || "").replace("#", "");
         if (clean.length !== 6) return `rgba(2,132,199,${alpha})`;
@@ -2925,6 +3079,96 @@
       }
 
       function buildTrendBands(payload) {
+        const trendCfgByRange = {
+          "1d": {
+            rsiTopRev: 66,
+            rsiBotRev: 34,
+            rsiBullMin: 49,
+            rsiBullMax: 70,
+            rsiBearMin: 30,
+            rsiBearMax: 52,
+            volUpMult: 1.05,
+            volDownMult: 0.95,
+            smoothWindow: 2,
+            minRun: 2,
+          },
+          "1w": {
+            rsiTopRev: 68,
+            rsiBotRev: 32,
+            rsiBullMin: 51,
+            rsiBullMax: 68,
+            rsiBearMin: 32,
+            rsiBearMax: 49,
+            volUpMult: 1.08,
+            volDownMult: 0.92,
+            smoothWindow: 3,
+            minRun: 3,
+          },
+          "1m": {
+            rsiTopRev: 66,
+            rsiBotRev: 34,
+            rsiBullMin: 48,
+            rsiBullMax: 70,
+            rsiBearMin: 30,
+            rsiBearMax: 52,
+            volUpMult: 1.04,
+            volDownMult: 0.96,
+            smoothWindow: 2,
+            minRun: 2,
+          },
+          "3m": {
+            rsiTopRev: 66,
+            rsiBotRev: 34,
+            rsiBullMin: 49,
+            rsiBullMax: 69,
+            rsiBearMin: 31,
+            rsiBearMax: 51,
+            volUpMult: 1.06,
+            volDownMult: 0.94,
+            smoothWindow: 2,
+            minRun: 2,
+          },
+          "1y": {
+            rsiTopRev: 70,
+            rsiBotRev: 30,
+            rsiBullMin: 53,
+            rsiBullMax: 66,
+            rsiBearMin: 34,
+            rsiBearMax: 47,
+            volUpMult: 1.12,
+            volDownMult: 0.88,
+            smoothWindow: 4,
+            minRun: 4,
+          },
+          "max": {
+            rsiTopRev: 70,
+            rsiBotRev: 30,
+            rsiBullMin: 53,
+            rsiBullMax: 66,
+            rsiBearMin: 34,
+            rsiBearMax: 47,
+            volUpMult: 1.12,
+            volDownMult: 0.88,
+            smoothWindow: 4,
+            minRun: 4,
+          },
+        };
+        const baseCfg = trendCfgByRange[activeRange] || trendCfgByRange["1w"];
+        const sensNorm = Math.max(0, Math.min(100, Number(trendSensitivity || 50))) / 100;
+        const sensDelta = sensNorm - 0.5; // left: stricter/fewer, right: looser/more
+        const cfg = {
+          rsiTopRev: Math.max(55, Math.min(75, baseCfg.rsiTopRev - (sensDelta * 6))),
+          rsiBotRev: Math.max(25, Math.min(45, baseCfg.rsiBotRev + (sensDelta * 6))),
+          rsiBullMin: Math.max(40, Math.min(60, baseCfg.rsiBullMin - (sensDelta * 6))),
+          rsiBullMax: Math.max(60, Math.min(80, baseCfg.rsiBullMax + (sensDelta * 6))),
+          rsiBearMin: Math.max(20, Math.min(45, baseCfg.rsiBearMin - (sensDelta * 6))),
+          rsiBearMax: Math.max(40, Math.min(60, baseCfg.rsiBearMax + (sensDelta * 6))),
+          volUpMult: Math.max(1.0, Math.min(1.25, baseCfg.volUpMult - (sensDelta * 0.16))),
+          volDownMult: Math.max(0.75, Math.min(1.0, baseCfg.volDownMult + (sensDelta * 0.16))),
+          smoothWindow: Math.max(1, Math.min(6, Math.round(baseCfg.smoothWindow - (sensDelta * 4)))),
+          minRun: Math.max(1, Math.min(6, Math.round(baseCfg.minRun - (sensDelta * 4)))),
+        };
+
         const points = Array.isArray(payload?.points) ? payload.points : [];
         if (points.length < 40) return [];
 
@@ -2967,8 +3211,8 @@
             .filter((v) => Number.isFinite(v) && v > 0);
           const avgVol20 = recentVol.length ? (recentVol.reduce((a, b) => a + b, 0) / recentVol.length) : 0;
           const vol = Number(pt?.volume || 0);
-          const volUp = avgVol20 > 0 ? vol >= (avgVol20 * 1.1) : false;
-          const volDown = avgVol20 > 0 ? vol <= (avgVol20 * 0.9) : false;
+          const volUp = avgVol20 > 0 ? vol >= (avgVol20 * cfg.volUpMult) : false;
+          const volDown = avgVol20 > 0 ? vol <= (avgVol20 * cfg.volDownMult) : false;
 
           let state = "neutral";
           if (Number.isFinite(rsi) && macd && Number.isFinite(macd.macd) && Number.isFinite(macd.signal)) {
@@ -2981,12 +3225,12 @@
             const nearUpper = Number.isFinite(upper) ? close >= upper * 0.995 : false;
             const nearLower = Number.isFinite(lower) ? close <= lower * 1.005 : false;
 
-            const bullishCore = rsi >= 52 && rsi <= 67 && macd.macd > macd.signal && above50 && above200;
-            const bearishCore = rsi >= 33 && rsi <= 48 && macd.macd < macd.signal && below50 && (below200 || !Number.isFinite(ma200));
+            const bullishCore = rsi >= cfg.rsiBullMin && rsi <= cfg.rsiBullMax && macd.macd > macd.signal && above50 && above200;
+            const bearishCore = rsi >= cfg.rsiBearMin && rsi <= cfg.rsiBearMax && macd.macd < macd.signal && below50 && (below200 || !Number.isFinite(ma200));
 
-            if (rsi >= 68 && nearUpper && histFalling && volDown) {
+            if (rsi >= cfg.rsiTopRev && nearUpper && histFalling && volDown) {
               state = "reversal";
-            } else if (rsi <= 32 && nearLower && histRising && volUp) {
+            } else if (rsi <= cfg.rsiBotRev && nearLower && histRising && volUp) {
               state = "reversal";
             } else if (bullishCore && (histRising || volUp) && !nearUpper) {
               state = "bullish";
@@ -3000,7 +3244,7 @@
         if (!states.length) return [];
 
         const order = { neutral: 0, bullish: 1, bearish: 2, reversal: 3 };
-        const smoothWindow = 3;
+        const smoothWindow = cfg.smoothWindow;
         const smoothed = states.map((s, idx) => {
           const start = Math.max(0, idx - smoothWindow + 1);
           const slice = states.slice(start, idx + 1);
@@ -3026,7 +3270,7 @@
           const ms = Date.parse(smoothed[i].x);
           if (!Number.isFinite(ms)) continue;
           if (smoothed[i].state !== current) {
-            if (runLen >= 3) bands.push({ start: startMs, end: ms, state: current });
+            if (runLen >= cfg.minRun) bands.push({ start: startMs, end: ms, state: current });
             startMs = ms;
             current = smoothed[i].state;
             runLen = 1;
@@ -3036,7 +3280,7 @@
         }
         const lastMs = Date.parse(smoothed[smoothed.length - 1].x);
         if (Number.isFinite(startMs) && Number.isFinite(lastMs) && lastMs > startMs) {
-          if (runLen >= 3) bands.push({ start: startMs, end: lastMs, state: current });
+          if (runLen >= cfg.minRun) bands.push({ start: startMs, end: lastMs, state: current });
         }
         return bands.filter((b) => Number.isFinite(b.start) && Number.isFinite(b.end) && b.end > b.start);
       }
@@ -3056,11 +3300,18 @@
         const trendBands = primary ? buildTrendBands(primary) : [];
         const lastBand = trendBands.length ? trendBands[trendBands.length - 1] : null;
         const trendText = primary ? `<div class="trend-summary"><strong>${primary.ticker} trend:</strong> ${getTrendStateLabel(lastBand?.state || "neutral")}</div>` : "";
+        const legend = `
+          <div class="trend-legend">
+            <span class="trend-legend-item"><span class="trend-legend-swatch" style="background: rgba(34,197,94,0.65);"></span>Green: bullish momentum</span>
+            <span class="trend-legend-item"><span class="trend-legend-swatch" style="background: rgba(239,68,68,0.65);"></span>Red: bearish momentum</span>
+            <span class="trend-legend-item"><span class="trend-legend-swatch" style="background: rgba(245,158,11,0.75);"></span>Yellow: reversal watch</span>
+          </div>
+        `;
         if (!alerts.length) {
-          confluenceAlertsEl.innerHTML = trendText;
+          confluenceAlertsEl.innerHTML = trendText + legend;
           return;
         }
-        confluenceAlertsEl.innerHTML = trendText + alerts
+        confluenceAlertsEl.innerHTML = trendText + legend + alerts
           .slice(0, 6)
           .map((a) => `<div class="alert-item">${a.text}</div>`)
           .join("");
@@ -3116,10 +3367,11 @@
         return out;
       }
 
-      async function fetchTickerData(symbol) {
+      async function fetchTickerData(symbol, forceRefresh = false) {
         try {
+          const refreshPart = forceRefresh ? "&refresh=1" : "";
           const res = await fetch(
-            `/api/history?ticker=${encodeURIComponent(symbol)}&range=${encodeURIComponent(activeRange)}`
+            `/api/history?ticker=${encodeURIComponent(symbol)}&range=${encodeURIComponent(activeRange)}${refreshPart}`
           );
           const payload = await res.json();
           if (!res.ok) {
@@ -3561,7 +3813,7 @@
         renderTickerList();
       }
 
-      async function loadData() {
+      async function loadData(forceRefresh = false) {
         const loadSeq = ++latestLoadSeq;
         const selectedSymbols = getSelectedSymbols();
         const selected = selectedSymbols.map((symbol) => ({ symbol }));
@@ -3579,7 +3831,7 @@
         errorEl.textContent = "";
         meta.textContent = `Loading ${selected.map((t) => t.symbol).join(", ")} (${activeRange})...`;
 
-        const results = await Promise.allSettled(selected.map((t) => fetchTickerData(t.symbol)));
+        const results = await Promise.allSettled(selected.map((t) => fetchTickerData(t.symbol, forceRefresh)));
         // Ignore stale responses from older in-flight loads.
         if (loadSeq !== latestLoadSeq) {
           return;
@@ -3626,7 +3878,7 @@
               })
               .join(" | ");
 
-        meta.textContent = `range: ${activeRange} | scale: ${resolvedScaleMode} | source: twelve_data | loaded ${nonEmpty.length}/${selected.length} | ${summary}`;
+        meta.textContent = `range: ${getRangeLabel(activeRange)} | scale: ${resolvedScaleMode} | source: twelve_data | loaded ${nonEmpty.length}/${selected.length} | ${summary}`;
         const skipped = [
           ...emptyTickers.map((t) => `${t}: no data for selected range`),
           ...failures,
@@ -3676,10 +3928,21 @@
         });
       });
 
+      if (refreshBtn) {
+        refreshBtn.addEventListener("click", () => {
+          logAction("manual_refresh_click", { range: activeRange });
+          loadData(true);
+        });
+      }
+
       if (centerMenuBtn) {
         centerMenuBtn.addEventListener("click", (ev) => {
           ev.stopPropagation();
           openRowActionsMenu(ev.clientX, ev.clientY, [
+            {
+              label: `Auto refresh (5m): ${autoRefreshEnabled ? "On" : "Off"}`,
+              onClick: () => setAutoRefreshEnabled(!autoRefreshEnabled),
+            },
             {
               label: "ClearAll",
               onClick: () => clearAllSelections(),
@@ -3701,6 +3964,26 @@
       }
       if (zoomOutBtn) {
         zoomOutBtn.addEventListener("click", () => zoomChartX(0.8));
+      }
+      if (trendSensitivityEl) {
+        const applySensitivityUi = () => {
+          const v = Math.max(0, Math.min(100, Number(trendSensitivityEl.value || 50)));
+          trendSensitivity = v;
+          trendSensitivityEl.style.setProperty("--pct", `${v}%`);
+          if (trendSensitivityValueEl) trendSensitivityValueEl.textContent = String(v);
+          const selectedSymbols = getSelectedSymbols();
+          const payloads = selectedSymbols
+            .map((symbol) => latestPayloadByTicker[symbol])
+            .filter((p) => Array.isArray(p?.points) && p.points.length > 0);
+          if (!payloads.length) return;
+          drawChart(payloads);
+          renderConfluenceAlerts(payloads);
+          logAction("trend_sensitivity_change", { value: v });
+        };
+        trendSensitivityEl.addEventListener("input", applySensitivityUi);
+        trendSensitivityEl.addEventListener("change", applySensitivityUi);
+        trendSensitivityEl.style.setProperty("--pct", `${trendSensitivity}%`);
+        if (trendSensitivityValueEl) trendSensitivityValueEl.textContent = String(trendSensitivity);
       }
 
       if (typeof ResizeObserver !== "undefined" && chartWrapEl) {
@@ -3794,6 +4077,8 @@
 
       async function initApp() {
         logAction("app_init_start", {});
+        autoRefreshEnabled = localStorage.getItem(AUTO_REFRESH_KEY) === "1";
+        startAutoRefreshTimer();
         loadTickers();
         await loadImportedPortfolios();
         await loadLeftCategories();

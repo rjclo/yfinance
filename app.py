@@ -23,7 +23,7 @@ app = Flask(__name__)
 # Map UI ranges to yfinance period/interval values.
 RANGE_MAP: Dict[str, Tuple[str, str]] = {
     "1d": ("1d", "1m"),
-    "1w": ("5d", "5m"),
+    "1w": ("10d", "5m"),
     "1m": ("1mo", "15m"),
     "3m": ("3mo", "1h"),
     "1y": ("1y", "1d"),
@@ -969,6 +969,7 @@ def api_history():
     ticker = (request.args.get("ticker") or "NVDA").strip().upper()
     range_key = (request.args.get("range") or "1m").strip().lower()
     source = "twelve_data"
+    force_refresh = (request.args.get("refresh") or "").strip().lower() in {"1", "true", "yes", "on"}
 
     if not ticker:
         return jsonify({"error": "Ticker is required."}), 400
@@ -979,13 +980,14 @@ def api_history():
     use_prepost = range_key == "1d"
 
     try:
+        ttl_history_sec = 0 if force_refresh else 300
         df, provider_used = _fetch_price_history_cached(
             ticker=ticker,
             period=period,
             interval=interval,
             prepost=use_prepost,
             source=source,
-            ttl_sec=30 if range_key == "1d" else 90,
+            ttl_sec=ttl_history_sec,
         )
         if df.empty and range_key == "1d":
             df, provider_used = _fetch_price_history_cached(
@@ -994,7 +996,7 @@ def api_history():
                 interval="5m",
                 prepost=True,
                 source=source,
-                ttl_sec=30,
+                ttl_sec=ttl_history_sec,
             )
 
         points = _to_chart_points(df)
