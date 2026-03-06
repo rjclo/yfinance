@@ -57,6 +57,7 @@
 
       .import-panel {
         padding: 14px;
+        min-width: 0;
       }
 
       .panel-name-input {
@@ -330,6 +331,7 @@
 
       .main {
         padding: 16px;
+        min-width: 0;
       }
 
       .controls {
@@ -448,16 +450,25 @@
         margin-top: 16px;
         height: 460px;
         position: relative;
+        min-width: 0;
       }
 
-      .main.fullscreen-mode {
+      .chart-wrap canvas {
+        width: 100% !important;
+        height: 100% !important;
+        display: block;
+      }
+
+      .main:fullscreen,
+      .main:-webkit-full-screen {
         height: 100vh;
         display: flex;
         flex-direction: column;
         overflow: hidden;
       }
 
-      .main.fullscreen-mode .chart-wrap {
+      .main:fullscreen .chart-wrap,
+      .main:-webkit-full-screen .chart-wrap {
         margin-top: 12px;
         height: auto;
         min-height: 280px;
@@ -501,6 +512,31 @@
 
       .chart-fs-btn:hover::after {
         opacity: 1;
+      }
+
+      .chart-zoom-controls {
+        position: absolute;
+        right: 8px;
+        bottom: 8px;
+        display: inline-flex;
+        flex-direction: column;
+        gap: 6px;
+        z-index: 8;
+      }
+
+      .chart-zoom-btn {
+        width: 32px;
+        height: 32px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.92);
+        color: #0f172a;
+        font-size: 18px;
+        line-height: 1;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
       }
 
       .rsi-chart-wrap {
@@ -659,6 +695,11 @@
 
           <div class="chart-wrap">
             <button id="fullscreenBtn" class="chart-fs-btn" type="button" data-tooltip="Entire Screen" aria-label="Entire Screen">&#x26F6;</button>
+            <div class="chart-zoom-controls">
+              <button id="zoomInBtn" class="chart-zoom-btn" type="button" aria-label="Zoom In">+</button>
+              <button id="resetZoomBtn" class="chart-zoom-btn" type="button" aria-label="Reset Zoom">&#8634;</button>
+              <button id="zoomOutBtn" class="chart-zoom-btn" type="button" aria-label="Zoom Out">-</button>
+            </div>
             <canvas id="priceChart"></canvas>
           </div>
           <div id="rsiWrap" class="rsi-chart-wrap" style="display:none;">
@@ -681,9 +722,10 @@
       const COLORS = ["#0284c7", "#dc2626", "#16a34a", "#7c3aed", "#ea580c"];
       const RSI_COLORS = ["#f59e0b", "#14b8a6", "#ef4444", "#0ea5e9", "#f97316"];
       const MACD_COLORS = ["#9333ea", "#b91c1c", "#059669", "#0369a1", "#c2410c"];
+      const MACD_SIGNAL_COLORS = ["#111827", "#0f766e", "#b45309", "#7c2d12", "#374151"];
       const MA_STYLES = {
         ma50: { label: "50d MA", color: "#f59e0b" },
-        ma200: { label: "200d MA", color: "#8b5cf6" },
+        ma200: { label: "200d MA", color: "#14b8a6" },
       };
 
       let activeRange = "1d";
@@ -712,7 +754,16 @@
       const addBtn = document.getElementById("addBtn");
       const centerMenuBtn = document.getElementById("centerMenuBtn");
       const fullscreenBtn = document.getElementById("fullscreenBtn");
+      const zoomInBtn = document.getElementById("zoomInBtn");
+      const resetZoomBtn = document.getElementById("resetZoomBtn");
+      const zoomOutBtn = document.getElementById("zoomOutBtn");
       const mainPanelEl = document.querySelector(".panel.main");
+      const layoutEl = document.querySelector(".layout");
+      const sidebarEl = document.querySelector(".panel.sidebar");
+      const importPanelEl = document.querySelector(".panel.import-panel");
+      const chartWrapEl = document.querySelector(".chart-wrap");
+      let chartWrapResizeObserver = null;
+      let chartWrapResizeTimer = null;
       const tickerList = document.getElementById("tickerList");
       const leftTabsEl = document.getElementById("leftTabs");
       const selectedCount = document.getElementById("selectedCount");
@@ -766,12 +817,111 @@
         return !!(document.fullscreenElement || document.webkitFullscreenElement);
       }
 
+      function debugLayoutState(label) {
+        try {
+          const fsEl = document.fullscreenElement || document.webkitFullscreenElement || null;
+          const mainRect = mainPanelEl?.getBoundingClientRect?.();
+          const sideRect = sidebarEl?.getBoundingClientRect?.();
+          const importRect = importPanelEl?.getBoundingClientRect?.();
+          const canvas = document.getElementById("priceChart");
+          const canvasRect = canvas?.getBoundingClientRect?.();
+          const wrapRect = document.querySelector(".chart-wrap")?.getBoundingClientRect?.();
+          const data = {
+            label,
+            ts: new Date().toISOString(),
+            viewport: { w: window.innerWidth, h: window.innerHeight },
+            fullscreen_active: isFullscreenActive(),
+            fullscreen_element: fsEl ? `${fsEl.tagName}.${(fsEl.className || "").toString().replace(/\s+/g, ".")}` : "",
+            body_overflow: getComputedStyle(document.body).overflow,
+            layout_display: layoutEl ? getComputedStyle(layoutEl).display : "",
+            layout_columns: layoutEl ? getComputedStyle(layoutEl).gridTemplateColumns : "",
+            import_display: importPanelEl ? getComputedStyle(importPanelEl).display : "",
+            main_grid_column: mainPanelEl ? getComputedStyle(mainPanelEl).gridColumn : "",
+            sidebar: sideRect ? { w: Math.round(sideRect.width), h: Math.round(sideRect.height), x: Math.round(sideRect.x) } : null,
+            main: mainRect ? { w: Math.round(mainRect.width), h: Math.round(mainRect.height), x: Math.round(mainRect.x) } : null,
+            import_panel: importRect ? { w: Math.round(importRect.width), h: Math.round(importRect.height), x: Math.round(importRect.x) } : null,
+            chart_wrap: wrapRect ? { w: Math.round(wrapRect.width), h: Math.round(wrapRect.height) } : null,
+            canvas: canvasRect ? { w: Math.round(canvasRect.width), h: Math.round(canvasRect.height) } : null,
+            chart_area: priceChart?.chartArea
+              ? {
+                  left: Math.round(priceChart.chartArea.left),
+                  right: Math.round(priceChart.chartArea.right),
+                  top: Math.round(priceChart.chartArea.top),
+                  bottom: Math.round(priceChart.chartArea.bottom),
+                }
+              : null,
+          };
+          console.log("[layout-debug]", data);
+          logAction("layout_debug", data);
+        } catch (err) {
+          logAction("layout_debug_failed", { label, error: err?.message || String(err) });
+        }
+      }
+
+      function resetLayoutAfterFullscreenExit() {
+        try {
+          if (!mainPanelEl) return;
+          mainPanelEl.style.removeProperty("width");
+          mainPanelEl.style.width = "auto";
+          mainPanelEl.style.removeProperty("height");
+          mainPanelEl.style.removeProperty("max-width");
+          mainPanelEl.style.maxWidth = "100%";
+          mainPanelEl.style.minWidth = "0";
+          mainPanelEl.style.removeProperty("max-height");
+          mainPanelEl.style.removeProperty("transform");
+          mainPanelEl.style.removeProperty("position");
+          mainPanelEl.style.removeProperty("inset");
+          if (layoutEl) {
+            layoutEl.style.removeProperty("grid-template-columns");
+            layoutEl.style.removeProperty("display");
+            layoutEl.style.display = "grid";
+          }
+          if (importPanelEl) {
+            importPanelEl.style.removeProperty("display");
+            importPanelEl.style.removeProperty("width");
+            importPanelEl.style.removeProperty("max-width");
+            importPanelEl.style.removeProperty("visibility");
+          }
+          if (sidebarEl) {
+            sidebarEl.style.removeProperty("display");
+            sidebarEl.style.removeProperty("width");
+          }
+          if (window.innerWidth > 980 && layoutEl) {
+            // Defensive restore: some browsers can leave the grid in a bad state after fullscreen exit.
+            layoutEl.style.display = "grid";
+            layoutEl.style.gridTemplateColumns = "280px 1fr 300px";
+          }
+          if (window.innerWidth > 980 && mainPanelEl) {
+            mainPanelEl.style.gridColumn = "2";
+          } else if (mainPanelEl) {
+            mainPanelEl.style.removeProperty("grid-column");
+          }
+          if (window.innerWidth > 980 && importPanelEl) {
+            importPanelEl.style.display = "block";
+            importPanelEl.style.visibility = "visible";
+            importPanelEl.style.gridColumn = "3";
+            importPanelEl.style.width = "auto";
+            importPanelEl.style.maxWidth = "100%";
+          } else if (importPanelEl) {
+            importPanelEl.style.removeProperty("grid-column");
+          }
+          const canvas = document.getElementById("priceChart");
+          if (canvas) {
+            canvas.style.removeProperty("width");
+            canvas.style.removeProperty("height");
+            canvas.removeAttribute("width");
+            canvas.removeAttribute("height");
+          }
+        } catch (_) {
+          // no-op
+        }
+      }
+
       function updateFullscreenUi() {
-        if (!fullscreenBtn || !mainPanelEl) return;
+        if (!fullscreenBtn) return;
         const active = isFullscreenActive();
         fullscreenBtn.setAttribute("data-tooltip", active ? "Exit Full Screen" : "Entire Screen");
         fullscreenBtn.setAttribute("aria-label", active ? "Exit Full Screen" : "Entire Screen");
-        mainPanelEl.classList.toggle("fullscreen-mode", active);
       }
 
       function refreshChartAfterFullscreenChange() {
@@ -780,17 +930,61 @@
           try {
             if (!isFullscreenActive() && typeof priceChart.resetZoom === "function") {
               priceChart.resetZoom();
+              resetLayoutAfterFullscreenExit();
             }
             priceChart.resize();
             priceChart.update("none");
+            debugLayoutState(isFullscreenActive() ? "after_fullscreen_enter" : "after_fullscreen_exit");
           } catch (_) {
             // Keep UI stable even if chart instance is mid-refresh.
           }
         }, 30);
+        setTimeout(() => {
+          try {
+            if (!isFullscreenActive()) {
+              resetLayoutAfterFullscreenExit();
+              window.dispatchEvent(new Event("resize"));
+              priceChart.resize();
+              priceChart.update("none");
+            }
+          } catch (_) {
+            // no-op
+          }
+        }, 140);
+      }
+
+      function zoomChartX(factor) {
+        if (!priceChart || typeof priceChart.zoom !== "function") return;
+        try {
+          priceChart.zoom({ x: factor, y: 1 }, "none", "api");
+          syncVolumeWindowFromPrice();
+          logAction("chart_zoom_button", { factor });
+        } catch (_) {
+          // no-op
+        }
+      }
+
+      function resetChartZoom() {
+        if (!priceChart) return;
+        try {
+          if (typeof priceChart.resetZoom === "function") {
+            priceChart.resetZoom("none");
+          }
+          if (priceChart.options?.scales?.x) {
+            delete priceChart.options.scales.x.min;
+            delete priceChart.options.scales.x.max;
+          }
+          priceChart.update("none");
+          syncVolumeWindowFromPrice();
+          logAction("chart_zoom_reset", {});
+        } catch (_) {
+          // no-op
+        }
       }
 
       async function toggleFullscreenMainPanel() {
         if (!mainPanelEl) return;
+        debugLayoutState("before_fullscreen_toggle");
         try {
           if (!isFullscreenActive()) {
             if (mainPanelEl.requestFullscreen) {
@@ -812,6 +1006,7 @@
         } finally {
           updateFullscreenUi();
           refreshChartAfterFullscreenChange();
+          debugLayoutState("after_fullscreen_toggle");
         }
       }
 
@@ -3033,7 +3228,7 @@
               label: `${p.ticker} upper`,
               data: breakSeriesOnGaps(bands.upper, activeRange),
               yAxisID: "y",
-              borderColor: hexToRgba(color, 0.65),
+              borderColor: "rgba(100, 116, 139, 0.72)",
               borderDash: [4, 4],
               borderWidth: 1,
               fill: false,
@@ -3048,7 +3243,7 @@
               label: `${p.ticker} lower`,
               data: breakSeriesOnGaps(bands.lower, activeRange),
               yAxisID: "y",
-              borderColor: hexToRgba(color, 0.65),
+              borderColor: "rgba(100, 116, 139, 0.72)",
               borderDash: [4, 4],
               borderWidth: 1,
               fill: false,
@@ -3209,9 +3404,9 @@
                 label: `${p.ticker} MACD signal`,
                 data: breakSeriesOnGaps(normalizedSignal, activeRange),
                 yAxisID: "y",
-                borderColor: hexToRgba(MACD_COLORS[idx % MACD_COLORS.length], 0.65),
-                borderDash: [5, 3],
-                borderWidth: 1.2,
+                borderColor: MACD_SIGNAL_COLORS[idx % MACD_SIGNAL_COLORS.length],
+                borderDash: [8, 4],
+                borderWidth: 1.4,
                 fill: false,
                 tension: 0.15,
                 order: 3,
@@ -3255,8 +3450,8 @@
                   onPanComplete: () => syncVolumeWindowFromPrice(),
                 },
                 zoom: {
-                  wheel: { enabled: true },
-                  pinch: { enabled: true },
+                  wheel: { enabled: false },
+                  pinch: { enabled: false },
                   drag: { enabled: false },
                   mode: "x",
                   onZoomComplete: () => syncVolumeWindowFromPrice(),
@@ -3498,15 +3693,51 @@
           toggleFullscreenMainPanel();
         });
       }
+      if (zoomInBtn) {
+        zoomInBtn.addEventListener("click", () => zoomChartX(1.2));
+      }
+      if (resetZoomBtn) {
+        resetZoomBtn.addEventListener("click", () => resetChartZoom());
+      }
+      if (zoomOutBtn) {
+        zoomOutBtn.addEventListener("click", () => zoomChartX(0.8));
+      }
+
+      if (typeof ResizeObserver !== "undefined" && chartWrapEl) {
+        chartWrapResizeObserver = new ResizeObserver(() => {
+          if (!priceChart) return;
+          if (chartWrapResizeTimer) clearTimeout(chartWrapResizeTimer);
+          chartWrapResizeTimer = setTimeout(() => {
+            try {
+              priceChart.resize();
+              priceChart.update("none");
+            } catch (_) {
+              // no-op
+            }
+          }, 40);
+        });
+        chartWrapResizeObserver.observe(chartWrapEl);
+      }
 
       document.addEventListener("fullscreenchange", () => {
         updateFullscreenUi();
         refreshChartAfterFullscreenChange();
+        if (!isFullscreenActive()) {
+          setTimeout(() => window.dispatchEvent(new Event("resize")), 30);
+          setTimeout(() => window.dispatchEvent(new Event("resize")), 140);
+        }
+        debugLayoutState("fullscreenchange_event");
       });
       document.addEventListener("webkitfullscreenchange", () => {
         updateFullscreenUi();
         refreshChartAfterFullscreenChange();
+        if (!isFullscreenActive()) {
+          setTimeout(() => window.dispatchEvent(new Event("resize")), 30);
+          setTimeout(() => window.dispatchEvent(new Event("resize")), 140);
+        }
+        debugLayoutState("webkitfullscreenchange_event");
       });
+      window.__yfDebugLayout = (label = "manual_dump") => debugLayoutState(label);
 
       scaleButtons.forEach((btn) => {
         btn.addEventListener("click", () => {
