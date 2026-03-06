@@ -13,12 +13,26 @@ Set your key in the same shell where you run the app.
 export TWELVE_DATA_API_KEY='your_twelve_data_key'
 ```
 
+## Optional: AI Chart Explanation Key
+The hint/lightbulb explain feature requires an OpenAI API key.
+
+```bash
+export OPENAI_API_KEY='your_openai_api_key'
+```
+
+Optional model override (default is `gpt-4.1-mini`):
+
+```bash
+export OPENAI_CHART_MODEL='gpt-4.1-mini'
+```
+
 ## Option 1: Run With Python
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 export TWELVE_DATA_API_KEY='your_twelve_data_key'
+export OPENAI_API_KEY='your_openai_api_key'  # optional, for AI explain
 python app.py
 ```
 
@@ -29,6 +43,7 @@ Open [http://127.0.0.1:5000](http://127.0.0.1:5000)
 docker build -t yfinance-app .
 docker run --rm -p 5000:5000 \
   -e TWELVE_DATA_API_KEY='your_twelve_data_key' \
+  -e OPENAI_API_KEY='your_openai_api_key' \
   yfinance-app
 ```
 

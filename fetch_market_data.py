@@ -9,6 +9,7 @@ import argparse
 import io
 import os
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
@@ -87,6 +88,9 @@ def _fetch_twelve_data(ticker: str, period: str, interval: str) -> pd.DataFrame:
     if not isinstance(values, list) or not values:
         return pd.DataFrame()
 
+    meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+    source_tz = str(meta.get("exchange_timezone") or meta.get("timezone") or "UTC").strip() or "UTC"
+
     rows = []
     for v in values:
         if not isinstance(v, dict):
@@ -106,7 +110,13 @@ def _fetch_twelve_data(ticker: str, period: str, interval: str) -> pd.DataFrame:
         return pd.DataFrame()
 
     df = pd.DataFrame(rows)
-    df["date"] = pd.to_datetime(df["date"], utc=True, errors="coerce")
+    parsed = pd.to_datetime(df["date"], errors="coerce")
+    if parsed.dt.tz is None:
+        try:
+            parsed = parsed.dt.tz_localize(ZoneInfo(source_tz), ambiguous="infer", nonexistent="shift_forward")
+        except Exception:
+            parsed = parsed.dt.tz_localize("UTC")
+    df["date"] = parsed.dt.tz_convert("UTC")
     for c in ("Open", "High", "Low", "Close", "Volume"):
         df[c] = pd.to_numeric(df[c], errors="coerce")
     df = df.dropna(subset=["date", "Close"]).sort_values("date")

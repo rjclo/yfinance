@@ -9,6 +9,8 @@ import re
 import threading
 import time
 import uuid
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Tuple
@@ -60,6 +62,26 @@ _rsi_monitor_state: dict = {
 }
 _history_cache_lock = threading.Lock()
 _history_cache: dict[tuple[str, str, str, bool, str], dict] = {}
+
+
+def _extract_response_text(payload: dict) -> str:
+    output = payload.get("output")
+    if not isinstance(output, list):
+        return ""
+    chunks: list[str] = []
+    for item in output:
+        if not isinstance(item, dict):
+            continue
+        content = item.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            txt = block.get("text")
+            if isinstance(txt, str) and txt.strip():
+                chunks.append(txt.strip())
+    return "\n\n".join(chunks).strip()
 
 
 def _ensure_portfolio_storage() -> None:
@@ -1083,6 +1105,100 @@ def api_rsi_monitor_status():
         state["latest"] = {ticker: state["latest"].get(ticker)}
         state["events"] = [e for e in state["events"] if str(e.get("ticker")) == ticker]
     return jsonify(state)
+
+
+@app.post("/api/chart-explain")
+def api_chart_explain():
+    payload = request.get_json(silent=True) or {}
+    ticker = _sanitize_ticker(payload.get("ticker"))
+    range_key = str(payload.get("range") or "").strip().lower()
+    scale = str(payload.get("scale") or "").strip().lower()
+    metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
+    trend_image = str(payload.get("trend_image") or "")
+    regime_image = str(payload.get("regime_image") or "")
+
+    if not ticker:
+        return jsonify({"error": "ticker is required"}), 400
+    if not trend_image or not regime_image:
+        return jsonify({"error": "trend_image and regime_image are required"}), 400
+
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return jsonify(
+            {
+                "error": "OPENAI_API_KEY is not set.",
+                "hint": "Set OPENAI_API_KEY in this server shell, restart app.py, then retry.",
+            }
+        ), 400
+
+    model = os.getenv("OPENAI_CHART_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini"
+    window = metrics.get("window") if isinstance(metrics.get("window"), dict) else {}
+    summary = metrics.get("summary") if isinstance(metrics.get("summary"), dict) else {}
+    indicators = metrics.get("indicators") if isinstance(metrics.get("indicators"), dict) else {}
+
+    prompt_text = (
+        "You are a technical-analysis assistant. Read both images and metrics for the same visible chart window. "
+        "Explain in plain English with concise bullets and no hype. Do not give financial advice or guarantee direction.\n\n"
+        f"Ticker: {ticker}\n"
+        f"Range selected: {range_key}\n"
+        f"Scale: {scale}\n"
+        f"Visible window metrics JSON: {json.dumps({'window': window, 'summary': summary, 'indicators': indicators}, ensure_ascii=True)}\n\n"
+        "Priority: focus on bar/band interpretation. Explicitly compare Trend-view bands and Regime-view bands, and explain "
+        "what each recent red/green/yellow band implies for timing vs context. If trend and regime conflict, call that out.\n\n"
+        "Return markdown with exactly these sections:\n"
+        "1) Window Snapshot (3 bullets)\n"
+        "2) Band Interpretation (Trend + Regime) (3-6 bullets)\n"
+        "3) What Confirms / What Invalidates (2 bullets each)\n"
+        "4) Next Bars Checklist (numbered 1-3)\n"
+    )
+
+    body = {
+        "model": model,
+        "input": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": prompt_text},
+                    {"type": "input_text", "text": "Trend view screenshot:"},
+                    {"type": "input_image", "image_url": trend_image},
+                    {"type": "input_text", "text": "Regime view screenshot:"},
+                    {"type": "input_image", "image_url": regime_image},
+                ],
+            }
+        ],
+    }
+
+    req_data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/responses",
+        data=req_data,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            raw = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = exc.read().decode("utf-8")
+        except Exception:
+            detail = str(exc)
+        return jsonify({"error": "OpenAI request failed", "detail": detail[:2000]}), 502
+    except Exception as exc:
+        return jsonify({"error": "OpenAI request failed", "detail": str(exc)[:1000]}), 502
+
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return jsonify({"error": "OpenAI response parse failed", "detail": raw[:2000]}), 502
+
+    text = _extract_response_text(obj)
+    if not text:
+        return jsonify({"error": "No explanation text returned from model."}), 502
+    return jsonify({"ok": True, "explanation": text, "model": model})
 
 
 @app.post("/api/rsi-monitor/run-once")

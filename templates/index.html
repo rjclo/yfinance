@@ -7,6 +7,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/luxon@3/build/global/luxon.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.1/dist/chartjs-chart-financial.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
     <style>
@@ -332,6 +333,7 @@
       .main {
         padding: 16px;
         min-width: 0;
+        position: relative;
       }
 
       .controls {
@@ -339,6 +341,7 @@
         flex-wrap: wrap;
         gap: 10px;
         align-items: center;
+        padding-right: 56px;
       }
 
       .controls-menu-btn {
@@ -358,6 +361,124 @@
         flex-wrap: wrap;
         gap: 10px;
         align-items: center;
+        padding-right: 56px;
+      }
+
+      .hint-btn {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        z-index: 20;
+        width: 52px;
+        height: 52px;
+        border: 1px solid #0f172a;
+        border-radius: 999px;
+        background: #0f172a;
+        color: #f8fafc;
+        line-height: 1;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        box-shadow: 0 6px 16px rgba(15, 23, 42, 0.25);
+      }
+
+      .hint-btn:hover {
+        background: #1e293b;
+      }
+
+      .hint-icon {
+        width: 30px;
+        height: 30px;
+        display: block;
+      }
+
+      .hint-popover {
+        position: fixed;
+        top: 84px;
+        right: 24px;
+        z-index: 1800;
+        width: min(680px, calc(100vw - 40px));
+        height: min(78vh, 900px);
+        min-width: 360px;
+        min-height: 260px;
+        max-width: calc(100vw - 16px);
+        max-height: calc(100vh - 16px);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: #fff;
+        box-shadow: 0 14px 30px rgba(15, 23, 42, 0.18);
+        padding: 0;
+        color: #334155;
+        font-size: 13px;
+        line-height: 1.45;
+        overflow: hidden;
+        resize: both;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .hint-popover-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--border);
+        background: #f8fafc;
+        cursor: move;
+        user-select: none;
+      }
+
+      .hint-popover-title {
+        font-weight: 700;
+        color: #0f172a;
+        font-size: 14px;
+      }
+
+      .hint-popover-close {
+        border: 1px solid var(--border);
+        background: #fff;
+        border-radius: 8px;
+        padding: 4px 9px;
+        line-height: 1;
+        font-size: 14px;
+      }
+
+      .hint-popover-body {
+        padding: 10px 12px 12px;
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: auto;
+      }
+
+      .hint-list {
+        margin: 0;
+        padding-left: 18px;
+      }
+
+      .hint-list li + li {
+        margin-top: 6px;
+      }
+
+      .hint-explain {
+        margin-top: 10px;
+        border-top: 1px solid var(--border);
+        padding-top: 10px;
+      }
+
+      .hint-explain-title {
+        font-weight: 700;
+        color: #0f172a;
+        margin-bottom: 6px;
+      }
+
+      .hint-explain-body {
+        white-space: pre-wrap;
+      }
+
+      .hint-popover[hidden] {
+        display: none;
       }
 
       .ma-controls label {
@@ -408,6 +529,48 @@
         background: #111827;
         color: #fff;
         border-color: #111827;
+      }
+
+      .viewmode-toggle-wrap {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .viewmode-label {
+        font-size: 12px;
+        color: #334155;
+        font-weight: 600;
+      }
+
+      .viewmode-toggle {
+        width: 56px;
+        height: 30px;
+        border: none;
+        border-radius: 999px;
+        background: #cbd5e1;
+        position: relative;
+        padding: 0;
+      }
+
+      .viewmode-toggle.on {
+        background: #0ea5e9;
+      }
+
+      .viewmode-knob {
+        position: absolute;
+        top: 3px;
+        left: 3px;
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        background: #ffffff;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+        transition: left 0.16s ease;
+      }
+
+      .viewmode-toggle.on .viewmode-knob {
+        left: 29px;
       }
 
       .meta {
@@ -766,6 +929,37 @@
         </aside>
 
         <section class="panel main">
+          <button id="rulesHintBtn" class="hint-btn" type="button" title="Trend and regime rules" aria-label="Trend and regime rules">
+            <svg class="hint-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="10" r="5" fill="#fbbf24"></circle>
+              <rect x="10" y="15" width="4" height="4" rx="1" fill="#cbd5e1"></rect>
+              <rect x="9.5" y="19" width="5" height="2" rx="1" fill="#94a3b8"></rect>
+              <line x1="12" y1="1.8" x2="12" y2="4.2" stroke="#fde68a" stroke-width="1.7" stroke-linecap="round"></line>
+              <line x1="4.5" y1="5" x2="6.2" y2="6.7" stroke="#fde68a" stroke-width="1.7" stroke-linecap="round"></line>
+              <line x1="19.5" y1="5" x2="17.8" y2="6.7" stroke="#fde68a" stroke-width="1.7" stroke-linecap="round"></line>
+              <line x1="3.8" y1="11" x2="6.2" y2="11" stroke="#fde68a" stroke-width="1.7" stroke-linecap="round"></line>
+              <line x1="20.2" y1="11" x2="17.8" y2="11" stroke="#fde68a" stroke-width="1.7" stroke-linecap="round"></line>
+            </svg>
+          </button>
+          <div id="rulesHintPopover" class="hint-popover" hidden>
+            <div id="rulesHintHeader" class="hint-popover-header">
+              <div class="hint-popover-title">Chart Guide + AI Explain</div>
+              <button id="rulesHintCloseBtn" class="hint-popover-close" type="button" aria-label="Close guide">X</button>
+            </div>
+            <div class="hint-popover-body">
+              <ol class="hint-list">
+                <li><strong>Regime first:</strong> Bull regime favors long setups; Bear regime favors defensive/short setups; Neutral regime means smaller size and stricter filters.</li>
+                <li><strong>Trend for timing:</strong> Green in Bull supports continuation, Red in Bear supports continuation, Yellow is transition/watch only and not a standalone entry.</li>
+                <li><strong>Need confirmation:</strong> Require at least two of RSI slope, MACD alignment, price vs 50/200 MA, and above-average volume.</li>
+                <li><strong>Handle conflicts:</strong> If trend conflicts with regime, treat it as short counter-trend with tighter risk. If aligned, allow normal hold/targets.</li>
+                <li><strong>Exit logic:</strong> Exit on opposite band or obvious momentum rollover.</li>
+              </ol>
+              <div class="hint-explain">
+                <div class="hint-explain-title">AI Explain Current Window</div>
+                <div id="hintExplainBody" class="hint-explain-body">Open this hint to generate explanation for the visible chart window.</div>
+              </div>
+            </div>
+          </div>
           <div class="controls">
             <button id="centerMenuBtn" class="controls-menu-btn" title="Actions">&#8942;</button>
             <input id="tickerInput" class="ticker-input" placeholder="Add ticker" maxlength="12" />
@@ -780,6 +974,18 @@
             <button class="scale-btn active" data-scale="auto">auto</button>
             <button class="scale-btn" data-scale="price">price</button>
             <button class="scale-btn" data-scale="percent">%change</button>
+            <div class="viewmode-toggle-wrap">
+              <span id="chartTypeLabel" class="viewmode-label">Line view</span>
+              <button id="chartTypeToggle" class="viewmode-toggle" type="button" role="switch" aria-checked="false" aria-label="Toggle candlestick view">
+                <span class="viewmode-knob"></span>
+              </button>
+            </div>
+            <div class="viewmode-toggle-wrap">
+              <span id="viewModeLabel" class="viewmode-label">Trend view</span>
+              <button id="viewModeToggle" class="viewmode-toggle" type="button" role="switch" aria-checked="false" aria-label="Toggle regime view">
+                <span class="viewmode-knob"></span>
+              </button>
+            </div>
           </div>
           <div class="ma-controls">
             <label><input type="checkbox" class="ma-toggle" data-ma="ma50" />50d MA</label>
@@ -859,6 +1065,9 @@
       let trendSensitivity = 50;
       let autoRefreshEnabled = false;
       let autoRefreshTimer = null;
+      let bandViewMode = "trend";
+      let chartTypeMode = "line";
+      const viewportByRange = {};
 
       const tickerInput = document.getElementById("tickerInput");
       const addBtn = document.getElementById("addBtn");
@@ -889,11 +1098,24 @@
       const importedPortfolioList = document.getElementById("importedPortfolioList");
       const rangeButtons = Array.from(document.querySelectorAll(".range-btn"));
       const scaleButtons = Array.from(document.querySelectorAll(".scale-btn"));
+      const chartTypeToggleEl = document.getElementById("chartTypeToggle");
+      const chartTypeLabelEl = document.getElementById("chartTypeLabel");
+      const viewModeToggleEl = document.getElementById("viewModeToggle");
+      const viewModeLabelEl = document.getElementById("viewModeLabel");
       const maToggleEls = Array.from(document.querySelectorAll(".ma-toggle"));
       const rsiToggleEl = document.getElementById("rsiToggle");
       const macdToggleEl = document.getElementById("macdToggle");
       const rsiWrapEl = document.getElementById("rsiWrap");
       const confluenceAlertsEl = document.getElementById("confluenceAlerts");
+      const rulesHintBtn = document.getElementById("rulesHintBtn");
+      const rulesHintPopover = document.getElementById("rulesHintPopover");
+      const rulesHintHeader = document.getElementById("rulesHintHeader");
+      const rulesHintCloseBtn = document.getElementById("rulesHintCloseBtn");
+      const hintExplainBody = document.getElementById("hintExplainBody");
+      let explainRequestSeq = 0;
+      let hintDragActive = false;
+      let hintDragOffsetX = 0;
+      let hintDragOffsetY = 0;
 
       function sanitizeTicker(raw) {
         return (raw || "").toUpperCase().replace(/[^A-Z0-9.\-]/g, "").slice(0, 12);
@@ -1117,6 +1339,7 @@
             delete priceChart.options.scales.x.max;
           }
           priceChart.update("none");
+          delete viewportByRange[activeRange];
           syncVolumeWindowFromPrice();
           logAction("chart_zoom_reset", {});
         } catch (_) {
@@ -2436,10 +2659,79 @@
         rangeButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.range === range));
       }
 
+      function getPayloadBoundsMs(payloads) {
+        let min = Number.POSITIVE_INFINITY;
+        let max = Number.NEGATIVE_INFINITY;
+        (payloads || []).forEach((p) => {
+          (p?.points || []).forEach((pt) => {
+            const ms = luxon.DateTime.fromISO(String(pt?.t || ""), { zone: "utc" }).toMillis();
+            if (!Number.isFinite(ms)) return;
+            if (ms < min) min = ms;
+            if (ms > max) max = ms;
+          });
+        });
+        if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) return null;
+        return { min, max };
+      }
+
+      function getLiveViewport(chart) {
+        const x = chart?.scales?.x;
+        if (!x) return null;
+        const min = Number(x.min);
+        const max = Number(x.max);
+        if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) return null;
+        return { min, max };
+      }
+
+      function clampViewportToBounds(vp, bounds) {
+        if (!vp || !bounds) return null;
+        const min = Math.max(Number(vp.min), Number(bounds.min));
+        const max = Math.min(Number(vp.max), Number(bounds.max));
+        if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) return null;
+        if (max - min < 60 * 1000) return null;
+        return { min, max };
+      }
+
+      function rememberCurrentViewport() {
+        const vp = getLiveViewport(priceChart);
+        if (!vp) return;
+        viewportByRange[activeRange] = vp;
+      }
+
       function setScaleMode(mode) {
         scaleMode = mode;
         logAction("scale_mode_change", { mode });
         scaleButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.scale === mode));
+      }
+
+      function setChartTypeMode(mode) {
+        const m = String(mode || "").toLowerCase();
+        if (!["line", "candles"].includes(m)) return;
+        chartTypeMode = m;
+        const on = chartTypeMode === "candles";
+        if (chartTypeToggleEl) {
+          chartTypeToggleEl.classList.toggle("on", on);
+          chartTypeToggleEl.setAttribute("aria-checked", on ? "true" : "false");
+        }
+        if (chartTypeLabelEl) {
+          chartTypeLabelEl.textContent = on ? "Candles view" : "Line view";
+        }
+        logAction("chart_type_mode_change", { mode: chartTypeMode });
+      }
+
+      function setBandViewMode(mode) {
+        const m = String(mode || "").toLowerCase();
+        if (!["trend", "regime"].includes(m)) return;
+        bandViewMode = m;
+        const on = bandViewMode === "regime";
+        if (viewModeToggleEl) {
+          viewModeToggleEl.classList.toggle("on", on);
+          viewModeToggleEl.setAttribute("aria-checked", on ? "true" : "false");
+        }
+        if (viewModeLabelEl) {
+          viewModeLabelEl.textContent = on ? "Regime view" : "Trend view";
+        }
+        logAction("band_view_mode_change", { mode: bandViewMode });
       }
 
 
@@ -2486,6 +2778,20 @@
         return `${sign}${n.toFixed(2)}%`;
       }
 
+      function getUserTimeZone() {
+        try {
+          return Intl.DateTimeFormat().resolvedOptions().timeZone || "local";
+        } catch (_) {
+          return "local";
+        }
+      }
+
+      function formatLocalFromIso(iso, fmt = "MMM d h:mm a") {
+        const dt = luxon.DateTime.fromISO(String(iso || ""), { zone: "utc" }).toLocal();
+        if (!dt.isValid) return "";
+        return dt.toFormat(fmt);
+      }
+
       function getEtSessionLabel(dtEt) {
         const mins = dtEt.hour * 60 + dtEt.minute;
         if (mins < (9 * 60 + 30)) return "pre";
@@ -2510,10 +2816,12 @@
         const regular = parsed.filter((x) => getEtSessionLabel(x.dt) === "regular");
         const regularBase = regular.length ? regular[0] : parsed[0];
         const latestPoint = parsed[parsed.length - 1];
-        const latestTs = latestPoint.dt.toFormat("h:mm a");
+        const latestRawTs = points[points.length - 1]?.t;
+        const latestTs = formatLocalFromIso(latestRawTs, "h:mm a");
+        const zoneName = getUserTimeZone();
         const dayDelta = latestPoint.close - regularBase.close;
         const dayPct = regularBase.close > 0 ? (dayDelta / regularBase.close) * 100 : Number.NaN;
-        return `${payload.ticker} last ${formatNumber(latestPoint.close)} ${formatSignedNumber(dayDelta)} (${formatSignedPercent(dayPct)}) (${latestTs} ET)`;
+        return `${payload.ticker} last ${formatNumber(latestPoint.close)} ${formatSignedNumber(dayDelta)} (${formatSignedPercent(dayPct)}) (${latestTs} ${zoneName})`;
       }
 
       function isMultiDayRange(rangeKey) {
@@ -2521,7 +2829,7 @@
       }
 
       function formatXAxisTick(value) {
-        const dt = luxon.DateTime.fromMillis(Number(value));
+        const dt = luxon.DateTime.fromMillis(Number(value)).toLocal();
         if (!dt.isValid) return "";
 
         if (!isMultiDayRange(activeRange)) {
@@ -2546,6 +2854,34 @@
           "max": "max",
         };
         return m[String(rangeKey || "").toLowerCase()] || String(rangeKey || "");
+      }
+
+      function toMs(value) {
+        if (typeof value === "number" && Number.isFinite(value)) return value;
+        const ms = Date.parse(String(value || ""));
+        return Number.isFinite(ms) ? ms : NaN;
+      }
+
+      function pointsInWindow(points, minMs, maxMs) {
+        return (Array.isArray(points) ? points : []).filter((pt) => {
+          const ms = toMs(pt?.t);
+          return Number.isFinite(ms) && ms >= minMs && ms <= maxMs;
+        });
+      }
+
+      function latestValueAtOrBefore(series, maxMs, valueKey = "y") {
+        const src = Array.isArray(series) ? series : [];
+        for (let i = src.length - 1; i >= 0; i -= 1) {
+          const ms = toMs(src[i]?.x || src[i]?.t);
+          const v = Number(src[i]?.[valueKey]);
+          if (Number.isFinite(ms) && ms <= maxMs && Number.isFinite(v)) return v;
+        }
+        return null;
+      }
+
+      function fmt(v, digits = 2) {
+        const n = Number(v);
+        return Number.isFinite(n) ? Number(n.toFixed(digits)) : null;
       }
 
       function hexToRgba(hex, alpha) {
@@ -2927,6 +3263,101 @@
           .filter(Boolean);
       }
 
+      function buildAtrPctSeries(pricePoints, period = 14) {
+        const points = Array.isArray(pricePoints) ? pricePoints : [];
+        if (points.length <= period) return [];
+        const highs = points.map((pt) => Number(pt?.high));
+        const lows = points.map((pt) => Number(pt?.low));
+        const closes = points.map((pt) => Number(pt?.close));
+        if (
+          highs.some((v) => !Number.isFinite(v))
+          || lows.some((v) => !Number.isFinite(v))
+          || closes.some((v) => !Number.isFinite(v))
+        ) return [];
+
+        const trs = [];
+        for (let i = 1; i < points.length; i += 1) {
+          const tr = Math.max(
+            highs[i] - lows[i],
+            Math.abs(highs[i] - closes[i - 1]),
+            Math.abs(lows[i] - closes[i - 1]),
+          );
+          trs.push(tr);
+        }
+        if (trs.length < period) return [];
+
+        let atr = trs.slice(0, period).reduce((a, b) => a + b, 0) / period;
+        const out = [];
+        for (let i = period; i < trs.length; i += 1) {
+          atr = ((atr * (period - 1)) + trs[i]) / period;
+          const close = closes[i + 1];
+          if (!Number.isFinite(close) || close <= 0) continue;
+          out.push({ x: points[i + 1].t, atrPct: (atr / close) * 100 });
+        }
+        return out;
+      }
+
+      function buildAdxSeries(pricePoints, period = 14) {
+        const points = Array.isArray(pricePoints) ? pricePoints : [];
+        if (points.length <= (period * 2)) return [];
+        const highs = points.map((pt) => Number(pt?.high));
+        const lows = points.map((pt) => Number(pt?.low));
+        const closes = points.map((pt) => Number(pt?.close));
+        if (
+          highs.some((v) => !Number.isFinite(v))
+          || lows.some((v) => !Number.isFinite(v))
+          || closes.some((v) => !Number.isFinite(v))
+        ) return [];
+
+        const tr = [];
+        const pdm = [];
+        const ndm = [];
+        for (let i = 1; i < points.length; i += 1) {
+          const up = highs[i] - highs[i - 1];
+          const down = lows[i - 1] - lows[i];
+          pdm.push((up > down && up > 0) ? up : 0);
+          ndm.push((down > up && down > 0) ? down : 0);
+          tr.push(Math.max(
+            highs[i] - lows[i],
+            Math.abs(highs[i] - closes[i - 1]),
+            Math.abs(lows[i] - closes[i - 1]),
+          ));
+        }
+        if (tr.length < (period * 2)) return [];
+
+        let trSm = tr.slice(0, period).reduce((a, b) => a + b, 0);
+        let pdmSm = pdm.slice(0, period).reduce((a, b) => a + b, 0);
+        let ndmSm = ndm.slice(0, period).reduce((a, b) => a + b, 0);
+
+        const dxVals = [];
+        for (let i = period; i < tr.length; i += 1) {
+          trSm = trSm - (trSm / period) + tr[i];
+          pdmSm = pdmSm - (pdmSm / period) + pdm[i];
+          ndmSm = ndmSm - (ndmSm / period) + ndm[i];
+
+          if (trSm <= 0) {
+            dxVals.push({ idx: i + 1, dx: 0 });
+            continue;
+          }
+          const pdi = (pdmSm / trSm) * 100;
+          const ndi = (ndmSm / trSm) * 100;
+          const denom = pdi + ndi;
+          const dx = denom === 0 ? 0 : (Math.abs(pdi - ndi) / denom) * 100;
+          dxVals.push({ idx: i + 1, dx });
+        }
+        if (dxVals.length < period) return [];
+
+        let adx = dxVals.slice(0, period).reduce((a, b) => a + b.dx, 0) / period;
+        const out = [];
+        for (let i = period; i < dxVals.length; i += 1) {
+          adx = ((adx * (period - 1)) + dxVals[i].dx) / period;
+          const srcIdx = dxVals[i].idx;
+          if (!points[srcIdx]?.t) continue;
+          out.push({ x: points[srcIdx].t, adx });
+        }
+        return out;
+      }
+
       function normalizeIndicatorSeries(indicatorSeries, targetSeries, valueKey = "y") {
         const src = Array.isArray(indicatorSeries) ? indicatorSeries : [];
         const target = Array.isArray(targetSeries) ? targetSeries : [];
@@ -3285,6 +3716,143 @@
         return bands.filter((b) => Number.isFinite(b.start) && Number.isFinite(b.end) && b.end > b.start);
       }
 
+      function buildRegimeAnalysis(payload) {
+        const points = Array.isArray(payload?.points) ? payload.points : [];
+        if (points.length < 40) {
+          return {
+            current: { label: "Neutral", state: "neutral", score: 0, confidence: 0, adx: null, rsi: null, atrPct: null, rvol: null },
+            bands: [],
+          };
+        }
+
+        const rsiMap = getTimestampToPointMap(buildRsiSeries(points, 14));
+        const macdMap = new Map(buildMacdSeries(points, 12, 26, 9).map((m) => [String(m.x), m]));
+        const adxMap = new Map(buildAdxSeries(points, 14).map((a) => [String(a.x), Number(a.adx)]));
+        const atrPctMap = new Map(buildAtrPctSeries(points, 14).map((a) => [String(a.x), Number(a.atrPct)]));
+        const ma50Map = new Map(buildMovingAverageAligned(points, payload?.moving_averages?.ma50).map((x) => [String(x.x), Number(x.v)]));
+        const ma200Map = new Map(buildMovingAverageAligned(points, payload?.moving_averages?.ma200).map((x) => [String(x.x), Number(x.v)]));
+
+        const sensNorm = Math.max(0, Math.min(100, Number(trendSensitivity || 50))) / 100;
+        const sensDelta = sensNorm - 0.5;
+        const smoothWindow = Math.max(1, Math.min(6, Math.round(3 - (sensDelta * 4))));
+        const minRun = Math.max(1, Math.min(6, Math.round(3 - (sensDelta * 4))));
+        const adxStrong = 25 - (sensDelta * 6);
+        const rvolStrong = 1.2 - (sensDelta * 0.25);
+
+        const scored = [];
+        points.forEach((pt, idx) => {
+          const x = String(pt?.t || "");
+          const close = Number(pt?.close);
+          if (!x || !Number.isFinite(close)) return;
+          const prevClose = idx > 0 ? Number(points[idx - 1]?.close) : close;
+          const ma200 = ma200Map.get(x);
+          const rsi = rsiMap.get(x);
+          const macd = macdMap.get(x);
+          const adx = adxMap.get(x);
+          const atrPct = atrPctMap.get(x);
+
+          const recentVol = points
+            .slice(Math.max(0, idx - 19), idx + 1)
+            .map((p) => Number(p?.volume || 0))
+            .filter((v) => Number.isFinite(v) && v > 0);
+          const avgVol20 = recentVol.length ? (recentVol.reduce((a, b) => a + b, 0) / recentVol.length) : 0;
+          const rvol = avgVol20 > 0 ? (Number(pt?.volume || 0) / avgVol20) : 0;
+
+          let score = 0;
+          const maDir = Number.isFinite(ma200) ? (close > ma200 ? 1 : -1) : 0;
+          score += maDir;
+
+          let momDir = 0;
+          if (Number.isFinite(rsi) && macd && Number.isFinite(macd.macd) && Number.isFinite(macd.signal)) {
+            if (rsi > 52 && macd.macd > macd.signal) momDir = 1;
+            else if (rsi < 48 && macd.macd < macd.signal) momDir = -1;
+          }
+          score += momDir;
+
+          const baseDir = score === 0 ? (close >= prevClose ? 1 : -1) : (score > 0 ? 1 : -1);
+          if (Number.isFinite(adx) && adx >= adxStrong) score += baseDir;
+          if (Number.isFinite(rvol) && rvol >= rvolStrong) score += baseDir;
+
+          let state = "neutral";
+          if (score >= 2) state = "bullish";
+          else if (score <= -2) state = "bearish";
+
+          const confidence = Math.max(0, Math.min(100, Math.round((Math.abs(score) / 4) * 70 + (Number.isFinite(adx) ? Math.min(adx, 35) : 0))));
+          scored.push({
+            x,
+            ts: Date.parse(x),
+            state,
+            score,
+            confidence,
+            adx: Number.isFinite(adx) ? adx : null,
+            rsi: Number.isFinite(rsi) ? rsi : null,
+            atrPct: Number.isFinite(atrPct) ? atrPct : null,
+            rvol: Number.isFinite(rvol) ? rvol : null,
+          });
+        });
+        if (!scored.length) {
+          return {
+            current: { label: "Neutral", state: "neutral", score: 0, confidence: 0, adx: null, rsi: null, atrPct: null, rvol: null },
+            bands: [],
+          };
+        }
+
+        const order = { neutral: 0, bullish: 1, bearish: 2 };
+        const smoothed = scored.map((s, idx) => {
+          const start = Math.max(0, idx - smoothWindow + 1);
+          const slice = scored.slice(start, idx + 1);
+          const counts = { neutral: 0, bullish: 0, bearish: 0 };
+          slice.forEach((it) => { counts[it.state] = (counts[it.state] || 0) + 1; });
+          let best = "neutral";
+          let bestCount = -1;
+          Object.keys(counts).forEach((k) => {
+            const c = counts[k];
+            if (c > bestCount || (c === bestCount && order[k] > order[best])) {
+              best = k;
+              bestCount = c;
+            }
+          });
+          return { ...s, state: best };
+        });
+
+        const bands = [];
+        let startMs = smoothed[0].ts;
+        let current = smoothed[0].state;
+        let runLen = 1;
+        for (let i = 1; i < smoothed.length; i += 1) {
+          const ms = smoothed[i].ts;
+          if (!Number.isFinite(ms)) continue;
+          if (smoothed[i].state !== current) {
+            if (runLen >= minRun && current !== "neutral") bands.push({ start: startMs, end: ms, state: current });
+            startMs = ms;
+            current = smoothed[i].state;
+            runLen = 1;
+          } else {
+            runLen += 1;
+          }
+        }
+        const last = smoothed[smoothed.length - 1];
+        if (Number.isFinite(startMs) && Number.isFinite(last.ts) && last.ts > startMs) {
+          if (runLen >= minRun && current !== "neutral") bands.push({ start: startMs, end: last.ts, state: current });
+        }
+
+        const latest = smoothed[smoothed.length - 1];
+        const label = latest.state === "bullish" ? "Bull Trend" : latest.state === "bearish" ? "Bear Trend" : "Range / Neutral";
+        return {
+          current: {
+            label,
+            state: latest.state,
+            score: latest.score,
+            confidence: latest.confidence,
+            adx: latest.adx,
+            rsi: latest.rsi,
+            atrPct: latest.atrPct,
+            rvol: latest.rvol,
+          },
+          bands,
+        };
+      }
+
       function getTrendStateLabel(state) {
         const s = String(state || "neutral");
         if (s === "bullish") return "Bullish";
@@ -3297,24 +3865,215 @@
         if (!confluenceAlertsEl) return;
         const alerts = detectConfluenceAlerts(payloads);
         const primary = Array.isArray(payloads) && payloads.length === 1 ? payloads[0] : null;
-        const trendBands = primary ? buildTrendBands(primary) : [];
-        const lastBand = trendBands.length ? trendBands[trendBands.length - 1] : null;
-        const trendText = primary ? `<div class="trend-summary"><strong>${primary.ticker} trend:</strong> ${getTrendStateLabel(lastBand?.state || "neutral")}</div>` : "";
-        const legend = `
-          <div class="trend-legend">
-            <span class="trend-legend-item"><span class="trend-legend-swatch" style="background: rgba(34,197,94,0.65);"></span>Green: bullish momentum</span>
-            <span class="trend-legend-item"><span class="trend-legend-swatch" style="background: rgba(239,68,68,0.65);"></span>Red: bearish momentum</span>
-            <span class="trend-legend-item"><span class="trend-legend-swatch" style="background: rgba(245,158,11,0.75);"></span>Yellow: reversal watch</span>
-          </div>
-        `;
+        let header = "";
+        let legend = "";
+        if (primary && bandViewMode === "regime") {
+          const regime = buildRegimeAnalysis(primary);
+          const current = regime?.current || null;
+          header = current
+            ? `<div class="trend-summary"><strong>${primary.ticker} regime:</strong> ${current.label} (score ${current.score >= 0 ? "+" : ""}${current.score}, confidence ${current.confidence}%) | ADX ${current.adx == null ? "N/A" : current.adx.toFixed(1)} | RSI ${current.rsi == null ? "N/A" : current.rsi.toFixed(1)} | ATR% ${current.atrPct == null ? "N/A" : current.atrPct.toFixed(2)} | RVOL ${current.rvol == null ? "N/A" : current.rvol.toFixed(2)}</div>`
+            : "";
+          legend = `
+            <div class="trend-legend">
+              <span class="trend-legend-item"><span class="trend-legend-swatch" style="background: rgba(34,197,94,0.65);"></span>Green: bull trend regime</span>
+              <span class="trend-legend-item"><span class="trend-legend-swatch" style="background: rgba(239,68,68,0.65);"></span>Red: bear trend regime</span>
+            </div>
+          `;
+        } else if (primary) {
+          const trendBands = buildTrendBands(primary);
+          const lastBand = trendBands.length ? trendBands[trendBands.length - 1] : null;
+          header = `<div class="trend-summary"><strong>${primary.ticker} trend:</strong> ${getTrendStateLabel(lastBand?.state || "neutral")}</div>`;
+          legend = `
+            <div class="trend-legend">
+              <span class="trend-legend-item"><span class="trend-legend-swatch" style="background: rgba(34,197,94,0.65);"></span>Green: bullish momentum</span>
+              <span class="trend-legend-item"><span class="trend-legend-swatch" style="background: rgba(239,68,68,0.65);"></span>Red: bearish momentum</span>
+              <span class="trend-legend-item"><span class="trend-legend-swatch" style="background: rgba(245,158,11,0.75);"></span>Yellow: reversal watch</span>
+            </div>
+          `;
+        }
         if (!alerts.length) {
-          confluenceAlertsEl.innerHTML = trendText + legend;
+          confluenceAlertsEl.innerHTML = header + legend;
           return;
         }
-        confluenceAlertsEl.innerHTML = trendText + legend + alerts
+        confluenceAlertsEl.innerHTML = header + legend + alerts
           .slice(0, 6)
           .map((a) => `<div class="alert-item">${a.text}</div>`)
           .join("");
+      }
+
+      function refreshBandsOnly(payloads) {
+        if (!priceChart) return false;
+        const bands = payloads.length === 1
+          ? (
+              bandViewMode === "regime"
+                ? (buildRegimeAnalysis(payloads[0]).bands || [])
+                : buildTrendBands(payloads[0])
+            )
+          : [];
+        if (!priceChart.options?.plugins) priceChart.options.plugins = {};
+        if (!priceChart.options.plugins.trendBand) priceChart.options.plugins.trendBand = {};
+        priceChart.options.plugins.trendBand.bands = bands;
+        priceChart.update("none");
+        return true;
+      }
+
+      async function captureChartImageForMode(mode, payloads) {
+        const prev = bandViewMode;
+        if (prev !== mode) {
+          setBandViewMode(mode);
+          refreshBandsOnly(payloads);
+          renderConfluenceAlerts(payloads);
+        }
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        const canvas = document.getElementById("priceChart");
+        const image = (priceChart && typeof priceChart.toBase64Image === "function")
+          ? priceChart.toBase64Image()
+          : (canvas ? canvas.toDataURL("image/png") : "");
+        return { image, prevMode: prev };
+      }
+
+      function buildExplainMetrics(payload) {
+        if (!priceChart || !payload || !Array.isArray(payload.points) || payload.points.length === 0) return null;
+        const xScale = priceChart.scales?.x;
+        const minMs = Number(xScale?.min);
+        const maxMs = Number(xScale?.max);
+        if (!Number.isFinite(minMs) || !Number.isFinite(maxMs) || maxMs <= minMs) return null;
+
+        const visible = pointsInWindow(payload.points, minMs, maxMs);
+        if (!visible.length) return null;
+        const first = visible[0];
+        const last = visible[visible.length - 1];
+        const closes = visible.map((p) => Number(p?.close)).filter((v) => Number.isFinite(v));
+        const highs = visible.map((p) => Number(p?.high)).filter((v) => Number.isFinite(v));
+        const lows = visible.map((p) => Number(p?.low)).filter((v) => Number.isFinite(v));
+        const vols = visible.map((p) => Number(p?.volume || 0)).filter((v) => Number.isFinite(v) && v >= 0);
+        const changePct = (Number(first?.close) > 0 && Number.isFinite(Number(last?.close)))
+          ? ((Number(last.close) / Number(first.close)) - 1) * 100
+          : null;
+
+        const rsiSeries = buildRsiSeries(payload.points, 14);
+        const macdSeries = buildMacdSeries(payload.points, 12, 26, 9);
+        const ma50Aligned = buildMovingAverageAligned(payload.points, payload?.moving_averages?.ma50);
+        const ma200Aligned = buildMovingAverageAligned(payload.points, payload?.moving_averages?.ma200);
+        const adxSeries = buildAdxSeries(payload.points, 14);
+        const atrPctSeries = buildAtrPctSeries(payload.points, 14);
+
+        const latestMacd = (() => {
+          for (let i = macdSeries.length - 1; i >= 0; i -= 1) {
+            const ms = toMs(macdSeries[i]?.x);
+            if (Number.isFinite(ms) && ms <= maxMs) return macdSeries[i];
+          }
+          return null;
+        })();
+
+        const clippedPayload = { ...payload, points: visible };
+        const trendBands = buildTrendBands(clippedPayload);
+        const regime = buildRegimeAnalysis(clippedPayload);
+
+        const avgVol = vols.length ? (vols.reduce((a, b) => a + b, 0) / vols.length) : null;
+        const lastVol = Number(last?.volume || 0);
+        const rvol = (Number.isFinite(avgVol) && avgVol > 0) ? (lastVol / avgVol) : null;
+
+        return {
+          window: {
+            min_iso_utc: new Date(minMs).toISOString(),
+            max_iso_utc: new Date(maxMs).toISOString(),
+            points: visible.length,
+          },
+          summary: {
+            start: fmt(first?.close, 4),
+            end: fmt(last?.close, 4),
+            change_pct: fmt(changePct, 3),
+            high: highs.length ? fmt(Math.max(...highs), 4) : null,
+            low: lows.length ? fmt(Math.min(...lows), 4) : null,
+            avg_volume: fmt(avgVol, 0),
+            last_volume: fmt(lastVol, 0),
+          },
+          indicators: {
+            rsi14: fmt(latestValueAtOrBefore(rsiSeries, maxMs), 3),
+            macd: fmt(latestMacd?.macd, 4),
+            macd_signal: fmt(latestMacd?.signal, 4),
+            macd_hist: fmt(latestMacd?.hist, 4),
+            ma50: fmt(latestValueAtOrBefore(ma50Aligned, maxMs, "v"), 4),
+            ma200: fmt(latestValueAtOrBefore(ma200Aligned, maxMs, "v"), 4),
+            adx14: fmt(latestValueAtOrBefore(adxSeries, maxMs, "adx"), 3),
+            atr_pct_14: fmt(latestValueAtOrBefore(atrPctSeries, maxMs, "atrPct"), 4),
+            rvol20: fmt(rvol, 3),
+            trend_bands_count: Array.isArray(trendBands) ? trendBands.length : 0,
+            regime_state: regime?.current?.state || null,
+            regime_score: fmt(regime?.current?.score, 0),
+            regime_confidence: fmt(regime?.current?.confidence, 0),
+          },
+        };
+      }
+
+      async function explainCurrentChartWindow() {
+        if (!hintExplainBody) return;
+        const selected = getSelectedSymbols();
+        if (selected.length !== 1) {
+          hintExplainBody.textContent = "Select exactly one ticker to generate AI explanation.";
+          return;
+        }
+        const payload = latestPayloadByTicker[selected[0]];
+        if (!payload || !Array.isArray(payload.points) || payload.points.length === 0 || !priceChart) {
+          hintExplainBody.textContent = "No chart data available for explanation.";
+          return;
+        }
+
+        const reqSeq = ++explainRequestSeq;
+        hintExplainBody.textContent = "Generating AI explanation for visible window...";
+
+        const metrics = buildExplainMetrics(payload);
+        if (!metrics) {
+          hintExplainBody.textContent = "Unable to read current chart window. Try resetting zoom and retry.";
+          return;
+        }
+
+        const startMode = bandViewMode;
+        try {
+          const trendCapture = await captureChartImageForMode("trend", [payload]);
+          const trendImage = trendCapture.image;
+          const regimeCapture = await captureChartImageForMode("regime", [payload]);
+          const regimeImage = regimeCapture.image;
+
+          if (startMode !== bandViewMode) {
+            setBandViewMode(startMode);
+            refreshBandsOnly([payload]);
+            renderConfluenceAlerts([payload]);
+          }
+
+          const res = await fetch("/api/chart-explain", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ticker: payload.ticker,
+              range: activeRange,
+              scale: resolvedScaleMode,
+              metrics,
+              trend_image: trendImage,
+              regime_image: regimeImage,
+            }),
+          });
+          const out = await res.json().catch(() => ({}));
+          if (reqSeq !== explainRequestSeq) return;
+          if (!res.ok) {
+            const msg = [out.error || "Explain request failed.", out.hint || "", out.detail || ""]
+              .filter(Boolean)
+              .join(" ");
+            hintExplainBody.textContent = msg || "Explain request failed.";
+            return;
+          }
+          hintExplainBody.textContent = String(out.explanation || "").trim() || "No explanation returned.";
+        } catch (err) {
+          if (reqSeq !== explainRequestSeq) return;
+          hintExplainBody.textContent = `Explain request failed: ${err?.message || err}`;
+        } finally {
+          if (startMode !== bandViewMode) {
+            setBandViewMode(startMode);
+            refreshBandsOnly([payload]);
+            renderConfluenceAlerts([payload]);
+          }
+        }
       }
 
       function expectedBarMs(rangeKey) {
@@ -3386,19 +4145,28 @@
         }
       }
 
-      function drawChart(payloads) {
+      function drawChart(payloads, opts = {}) {
         const ctx = document.getElementById("priceChart").getContext("2d");
-        resolvedScaleMode = pickResolvedScaleMode(payloads);
+        resolvedScaleMode = chartTypeMode === "candles" ? "price" : pickResolvedScaleMode(payloads);
+        const preserveViewport = opts.preserveViewport !== false;
+        const bounds = getPayloadBoundsMs(payloads);
+        let requestedViewport = preserveViewport ? viewportByRange[activeRange] : null;
 
         if (priceChart) {
+          if (preserveViewport) {
+            const liveViewport = getLiveViewport(priceChart);
+            if (liveViewport) requestedViewport = liveViewport;
+          }
           priceChart.destroy();
         }
+        const appliedViewport = clampViewportToBounds(requestedViewport, bounds);
 
         const datasets = [];
         const maxVolume = payloads.reduce((acc, p) => {
           const localMax = (p.points || []).reduce((m, pt) => Math.max(m, Number(pt?.volume || 0)), 0);
           return Math.max(acc, localMax);
         }, 0);
+        const yValuesForLock = [];
 
         payloads.forEach((p, idx) => {
           const color = COLORS[idx % COLORS.length];
@@ -3420,6 +4188,18 @@
             };
           });
           if (series.length === 0) return;
+          series.forEach((s) => {
+            const yv = Number(s?.y);
+            if (Number.isFinite(yv)) yValuesForLock.push(yv);
+          });
+          if (chartTypeMode === "candles") {
+            p.points.forEach((pt) => {
+              const hi = Number(pt?.high);
+              const lo = Number(pt?.low);
+              if (Number.isFinite(hi)) yValuesForLock.push(hi);
+              if (Number.isFinite(lo)) yValuesForLock.push(lo);
+            });
+          }
           const displaySeries = breakSeriesOnGaps(series, activeRange);
           const priceGapConnectors = buildGapConnectorSeries(series, activeRange);
 
@@ -3440,22 +4220,48 @@
             isVolume: true,
           });
 
-          datasets.push({
-            label: p.ticker,
-            data: displaySeries,
-            yAxisID: "y",
-            borderColor: color,
-            backgroundColor: `${color}22`,
-            fill: false,
-            tension: 0.18,
-            borderWidth: 2,
-            order: 2,
-            pointRadius: 0,
-            pointHoverRadius: 5,
-            pointHoverBorderWidth: 2,
-            pointHitRadius: 10,
-          });
-          if (priceGapConnectors.length > 0) {
+          if (chartTypeMode === "candles") {
+            const candleData = p.points
+              .map((pt) => {
+                const o = Number(pt?.open);
+                const h = Number(pt?.high);
+                const l = Number(pt?.low);
+                const c = Number(pt?.close);
+                if (!Number.isFinite(o) || !Number.isFinite(h) || !Number.isFinite(l) || !Number.isFinite(c)) return null;
+                return { x: pt.t, o, h, l, c, open: o, high: h, low: l, close: c, volume: pt?.volume };
+              })
+              .filter(Boolean);
+            datasets.push({
+              type: "candlestick",
+              label: p.ticker,
+              data: candleData,
+              yAxisID: "y",
+              borderColor: color,
+              color: {
+                up: "#16a34a",
+                down: "#dc2626",
+                unchanged: "#64748b",
+              },
+              order: 2,
+            });
+          } else {
+            datasets.push({
+              label: p.ticker,
+              data: displaySeries,
+              yAxisID: "y",
+              borderColor: color,
+              backgroundColor: `${color}22`,
+              fill: false,
+              tension: 0.18,
+              borderWidth: 2,
+              order: 2,
+              pointRadius: 0,
+              pointHoverRadius: 5,
+              pointHoverBorderWidth: 2,
+              pointHitRadius: 10,
+            });
+          }
+          if (chartTypeMode !== "candles" && priceGapConnectors.length > 0) {
             datasets.push({
               label: `${p.ticker} gap-link`,
               data: priceGapConnectors,
@@ -3476,6 +4282,14 @@
           const bands = buildBollingerSeries(series, bandWindow, 2);
           const showBands = payloads.length === 1;
           if (showBands && bands.upper.length > 0 && bands.lower.length > 0) {
+            bands.upper.forEach((pt) => {
+              const yv = Number(pt?.y);
+              if (Number.isFinite(yv)) yValuesForLock.push(yv);
+            });
+            bands.lower.forEach((pt) => {
+              const yv = Number(pt?.y);
+              if (Number.isFinite(yv)) yValuesForLock.push(yv);
+            });
             datasets.push({
               label: `${p.ticker} upper`,
               data: breakSeriesOnGaps(bands.upper, activeRange),
@@ -3536,6 +4350,10 @@
             if (!maVisibility[maKey]) return;
             const maSeries = buildMovingAverageOverlay(p.points, p.moving_averages?.[maKey], baseClose);
             if (!maSeries.length) return;
+            maSeries.forEach((pt) => {
+              const yv = Number(pt?.y);
+              if (Number.isFinite(yv)) yValuesForLock.push(yv);
+            });
             datasets.push({
               label: `${p.ticker} ${style.label}`,
               data: breakSeriesOnGaps(maSeries, activeRange),
@@ -3573,6 +4391,10 @@
           if (showRsi) {
             const normalizedRsi = normalizeRsiSeries(buildRsiSeries(p.points, 14), series);
             if (normalizedRsi.length > 0) {
+              normalizedRsi.forEach((pt) => {
+                const yv = Number(pt?.y);
+                if (Number.isFinite(yv)) yValuesForLock.push(yv);
+              });
               datasets.push({
                 label: `${p.ticker} RSI (norm)`,
                 data: breakSeriesOnGaps(normalizedRsi, activeRange),
@@ -3636,6 +4458,10 @@
             const normalizedMacd = normalizeIndicatorSeries(macdSeries, series, "macd");
             const normalizedSignal = normalizeIndicatorSeries(macdSeries, series, "signal");
             if (normalizedMacd.length > 0) {
+              normalizedMacd.forEach((pt) => {
+                const yv = Number(pt?.y);
+                if (Number.isFinite(yv)) yValuesForLock.push(yv);
+              });
               datasets.push({
                 label: `${p.ticker} MACD`,
                 data: breakSeriesOnGaps(normalizedMacd, activeRange),
@@ -3652,6 +4478,10 @@
               });
             }
             if (normalizedSignal.length > 0) {
+              normalizedSignal.forEach((pt) => {
+                const yv = Number(pt?.y);
+                if (Number.isFinite(yv)) yValuesForLock.push(yv);
+              });
               datasets.push({
                 label: `${p.ticker} MACD signal`,
                 data: breakSeriesOnGaps(normalizedSignal, activeRange),
@@ -3671,7 +4501,22 @@
           }
         });
 
-        const trendBands = payloads.length === 1 ? buildTrendBands(payloads[0]) : [];
+        const trendBands = payloads.length === 1
+          ? (
+              bandViewMode === "regime"
+                ? (buildRegimeAnalysis(payloads[0]).bands || [])
+                : buildTrendBands(payloads[0])
+            )
+          : [];
+        const yMinRaw = yValuesForLock.length ? Math.min(...yValuesForLock) : null;
+        const yMaxRaw = yValuesForLock.length ? Math.max(...yValuesForLock) : null;
+        const ySpan = (Number.isFinite(yMinRaw) && Number.isFinite(yMaxRaw)) ? Math.max(yMaxRaw - yMinRaw, 1e-9) : null;
+        const yPad = Number.isFinite(ySpan) ? ySpan * 0.05 : null;
+        const yMinLockedBase = Number.isFinite(yMinRaw) && Number.isFinite(yPad) ? (yMinRaw - yPad) : undefined;
+        const yMaxLocked = Number.isFinite(yMaxRaw) && Number.isFinite(yPad) ? (yMaxRaw + yPad) : undefined;
+        const yMinLocked = resolvedScaleMode === "log"
+          ? (Number.isFinite(yMinLockedBase) ? Math.max(yMinLockedBase, 1e-6) : undefined)
+          : yMinLockedBase;
 
         priceChart = new Chart(ctx, {
           type: "line",
@@ -3699,14 +4544,20 @@
                 pan: {
                   enabled: true,
                   mode: "x",
-                  onPanComplete: () => syncVolumeWindowFromPrice(),
+                  onPanComplete: () => {
+                    rememberCurrentViewport();
+                    syncVolumeWindowFromPrice();
+                  },
                 },
                 zoom: {
                   wheel: { enabled: false },
                   pinch: { enabled: false },
                   drag: { enabled: false },
                   mode: "x",
-                  onZoomComplete: () => syncVolumeWindowFromPrice(),
+                  onZoomComplete: () => {
+                    rememberCurrentViewport();
+                    syncVolumeWindowFromPrice();
+                  },
                 },
               },
               trendBand: {
@@ -3717,6 +4568,8 @@
               x: {
                 type: isMultiDayRange(activeRange) ? "timeseries" : "time",
                 distribution: isMultiDayRange(activeRange) ? "series" : "linear",
+                min: appliedViewport ? appliedViewport.min : undefined,
+                max: appliedViewport ? appliedViewport.max : undefined,
                 time: {
                   tooltipFormat: "DDD t",
                   displayFormats: {
@@ -3742,6 +4595,8 @@
               },
               y: {
                 type: resolvedScaleMode === "log" ? "logarithmic" : "linear",
+                min: yMinLocked,
+                max: yMaxLocked,
                 ticks: {
                   callback: (v) => {
                     if (resolvedScaleMode === "percent") return `${formatNumber(v)}%`;
@@ -3754,6 +4609,11 @@
         });
 
         if (rsiWrapEl) rsiWrapEl.style.display = "none";
+        if (appliedViewport) {
+          viewportByRange[activeRange] = appliedViewport;
+        } else if (!preserveViewport) {
+          delete viewportByRange[activeRange];
+        }
         syncVolumeWindowFromPrice();
       }
 
@@ -3813,7 +4673,8 @@
         renderTickerList();
       }
 
-      async function loadData(forceRefresh = false) {
+      async function loadData(forceRefresh = false, opts = {}) {
+        const preserveViewport = opts.preserveViewport !== false;
         const loadSeq = ++latestLoadSeq;
         const selectedSymbols = getSelectedSymbols();
         const selected = selectedSymbols.map((symbol) => ({ symbol }));
@@ -3862,7 +4723,7 @@
           return;
         }
 
-        drawChart(nonEmpty);
+        drawChart(nonEmpty, { preserveViewport });
         renderConfluenceAlerts(nonEmpty);
         updatePressureState(nonEmpty);
 
@@ -3924,7 +4785,8 @@
       rangeButtons.forEach((btn) => {
         btn.addEventListener("click", () => {
           setActiveRange(btn.dataset.range);
-          loadData();
+          delete viewportByRange[activeRange];
+          loadData(false, { preserveViewport: false });
         });
       });
 
@@ -3976,7 +4838,7 @@
             .map((symbol) => latestPayloadByTicker[symbol])
             .filter((p) => Array.isArray(p?.points) && p.points.length > 0);
           if (!payloads.length) return;
-          drawChart(payloads);
+          if (!refreshBandsOnly(payloads)) drawChart(payloads);
           renderConfluenceAlerts(payloads);
           logAction("trend_sensitivity_change", { value: v });
         };
@@ -4027,6 +4889,105 @@
           setScaleMode(btn.dataset.scale);
           loadData();
         });
+      });
+
+      if (chartTypeToggleEl) {
+        chartTypeToggleEl.addEventListener("click", () => {
+          const nextMode = chartTypeMode === "candles" ? "line" : "candles";
+          setChartTypeMode(nextMode);
+          const selectedSymbols = getSelectedSymbols();
+          const payloads = selectedSymbols
+            .map((symbol) => latestPayloadByTicker[symbol])
+            .filter((p) => Array.isArray(p?.points) && p.points.length > 0);
+          if (!payloads.length) return;
+          drawChart(payloads);
+        });
+      }
+
+      if (viewModeToggleEl) {
+        viewModeToggleEl.addEventListener("click", () => {
+          const nextMode = bandViewMode === "regime" ? "trend" : "regime";
+          setBandViewMode(nextMode);
+          const selectedSymbols = getSelectedSymbols();
+          const payloads = selectedSymbols
+            .map((symbol) => latestPayloadByTicker[symbol])
+            .filter((p) => Array.isArray(p?.points) && p.points.length > 0);
+          if (!payloads.length) return;
+          if (!refreshBandsOnly(payloads)) drawChart(payloads);
+          renderConfluenceAlerts(payloads);
+        });
+      }
+
+      if (rulesHintBtn && rulesHintPopover) {
+        rulesHintBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const showing = !rulesHintPopover.hasAttribute("hidden");
+          if (showing) {
+            rulesHintPopover.setAttribute("hidden", "");
+          }
+          else {
+            rulesHintPopover.removeAttribute("hidden");
+            explainCurrentChartWindow();
+          }
+        });
+
+        if (rulesHintCloseBtn) {
+          rulesHintCloseBtn.addEventListener("click", () => {
+            rulesHintPopover.setAttribute("hidden", "");
+            hintDragActive = false;
+          });
+        }
+
+        if (rulesHintHeader) {
+          rulesHintHeader.addEventListener("mousedown", (e) => {
+            if (e.button !== 0) return;
+            if (rulesHintCloseBtn && rulesHintCloseBtn.contains(e.target)) return;
+            const rect = rulesHintPopover.getBoundingClientRect();
+            hintDragActive = true;
+            hintDragOffsetX = e.clientX - rect.left;
+            hintDragOffsetY = e.clientY - rect.top;
+            rulesHintPopover.style.left = `${Math.round(rect.left)}px`;
+            rulesHintPopover.style.top = `${Math.round(rect.top)}px`;
+            rulesHintPopover.style.right = "auto";
+            e.preventDefault();
+          });
+        }
+
+        document.addEventListener("mousemove", (e) => {
+          if (!hintDragActive) return;
+          const maxLeft = Math.max(8, window.innerWidth - rulesHintPopover.offsetWidth - 8);
+          const maxTop = Math.max(8, window.innerHeight - rulesHintPopover.offsetHeight - 8);
+          const left = Math.min(maxLeft, Math.max(8, e.clientX - hintDragOffsetX));
+          const top = Math.min(maxTop, Math.max(8, e.clientY - hintDragOffsetY));
+          rulesHintPopover.style.left = `${Math.round(left)}px`;
+          rulesHintPopover.style.top = `${Math.round(top)}px`;
+          rulesHintPopover.style.right = "auto";
+        });
+
+        document.addEventListener("mouseup", () => {
+          if (!hintDragActive) return;
+          hintDragActive = false;
+        });
+
+        window.addEventListener("resize", () => {
+          if (rulesHintPopover.hasAttribute("hidden")) return;
+          const rect = rulesHintPopover.getBoundingClientRect();
+          const maxLeft = Math.max(8, window.innerWidth - rulesHintPopover.offsetWidth - 8);
+          const maxTop = Math.max(8, window.innerHeight - rulesHintPopover.offsetHeight - 8);
+          const left = Math.min(maxLeft, Math.max(8, rect.left));
+          const top = Math.min(maxTop, Math.max(8, rect.top));
+          rulesHintPopover.style.left = `${Math.round(left)}px`;
+          rulesHintPopover.style.top = `${Math.round(top)}px`;
+          rulesHintPopover.style.right = "auto";
+        });
+      }
+
+      document.addEventListener("keydown", (e) => {
+        if (e.key !== "Escape") return;
+        if (rulesHintPopover && !rulesHintPopover.hasAttribute("hidden")) {
+          rulesHintPopover.setAttribute("hidden", "");
+          hintDragActive = false;
+        }
       });
 
       maToggleEls.forEach((el) => {
