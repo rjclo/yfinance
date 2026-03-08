@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import csv
+import io
 import json
 import logging
 import math
 import os
 import re
+import sqlite3
 import threading
 import time
 import uuid
@@ -14,6 +16,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Tuple
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 from flask import Flask, g, jsonify, render_template, request
@@ -47,6 +50,11 @@ CATEGORY_CONFIG_PATH = CATEGORY_DIR / "categories.json"
 
 AI_SETTINGS_PATH = BASE_DIR / "data" / "ai_settings.json"
 
+CACHE_DIR = BASE_DIR / "data" / "cache"
+CACHE_DB_PATH = CACHE_DIR / "market_data.db"
+CACHE_MAX_BYTES = 50 * 1024 * 1024  # 50 MB
+CACHE_MAX_AGE_SEC = 7 * 24 * 3600   # 7 days
+
 RSI_MONITOR_INTERVAL_SEC = int(os.getenv("RSI_MONITOR_INTERVAL_SEC", "600"))
 RSI_PERIOD = 14
 
@@ -64,6 +72,147 @@ _rsi_monitor_state: dict = {
 }
 _history_cache_lock = threading.Lock()
 _history_cache: dict[tuple[str, str, str, bool, str], dict] = {}
+
+
+class _DiskCache:
+    """SQLite-backed L2 cache for market data DataFrames."""
+
+    def __init__(self, db_path: Path, max_bytes: int, max_age_sec: int):
+        self._db_path = db_path
+        self._max_bytes = max_bytes
+        self._max_age_sec = max_age_sec
+        self._lock = threading.Lock()
+        self._ensure_db()
+
+    def _ensure_db(self):
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._connect() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS price_cache (
+                    ticker   TEXT NOT NULL,
+                    period   TEXT NOT NULL,
+                    interval TEXT NOT NULL,
+                    prepost  INTEGER NOT NULL,
+                    fetched_at REAL NOT NULL,
+                    data     BLOB NOT NULL,
+                    PRIMARY KEY (ticker, period, interval, prepost)
+                )
+            """)
+
+    def _connect(self) -> sqlite3.Connection:
+        return sqlite3.connect(str(self._db_path), timeout=5)
+
+    def get(self, ticker: str, period: str, interval: str, prepost: bool, max_age_sec: float) -> tuple[pd.DataFrame | None, float]:
+        """Return (DataFrame, fetched_at) or (None, 0) if miss/stale."""
+        with self._lock:
+            try:
+                with self._connect() as conn:
+                    row = conn.execute(
+                        "SELECT data, fetched_at FROM price_cache WHERE ticker=? AND period=? AND interval=? AND prepost=?",
+                        (ticker, period, interval, int(prepost)),
+                    ).fetchone()
+            except Exception:
+                return None, 0.0
+        if row is None:
+            return None, 0.0
+        blob, fetched_at = row
+        if (time.time() - fetched_at) > max_age_sec:
+            return None, fetched_at
+        try:
+            df = pd.read_parquet(io.BytesIO(blob))
+            return df, fetched_at
+        except Exception:
+            return None, 0.0
+
+    def get_stale(self, ticker: str, period: str, interval: str, prepost: bool, max_stale_sec: float = 86400) -> pd.DataFrame | None:
+        """Return DataFrame even if stale, up to max_stale_sec old. For fallback on API failure."""
+        with self._lock:
+            try:
+                with self._connect() as conn:
+                    row = conn.execute(
+                        "SELECT data, fetched_at FROM price_cache WHERE ticker=? AND period=? AND interval=? AND prepost=?",
+                        (ticker, period, interval, int(prepost)),
+                    ).fetchone()
+            except Exception:
+                return None
+        if row is None:
+            return None
+        blob, fetched_at = row
+        if (time.time() - fetched_at) > max_stale_sec:
+            return None
+        try:
+            return pd.read_parquet(io.BytesIO(blob))
+        except Exception:
+            return None
+
+    def put(self, ticker: str, period: str, interval: str, prepost: bool, df: pd.DataFrame):
+        """Write DataFrame to cache. Triggers eviction if over size limit."""
+        buf = io.BytesIO()
+        df.to_parquet(buf, index=True, compression="snappy")
+        blob = buf.getvalue()
+        with self._lock:
+            try:
+                with self._connect() as conn:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO price_cache (ticker, period, interval, prepost, fetched_at, data) VALUES (?, ?, ?, ?, ?, ?)",
+                        (ticker, period, interval, int(prepost), time.time(), blob),
+                    )
+            except Exception:
+                return
+        self._maybe_evict()
+
+    def purge_old(self):
+        """Delete rows older than max_age_sec. Called on startup."""
+        cutoff = time.time() - self._max_age_sec
+        with self._lock:
+            try:
+                with self._connect() as conn:
+                    conn.execute("DELETE FROM price_cache WHERE fetched_at < ?", (cutoff,))
+                    conn.execute("VACUUM")
+            except Exception:
+                pass
+
+    def _maybe_evict(self):
+        """If DB file exceeds max_bytes, delete oldest rows until under limit."""
+        try:
+            size = self._db_path.stat().st_size
+        except OSError:
+            return
+        if size <= self._max_bytes:
+            return
+        with self._lock:
+            try:
+                with self._connect() as conn:
+                    conn.execute("""
+                        DELETE FROM price_cache WHERE rowid IN (
+                            SELECT rowid FROM price_cache ORDER BY fetched_at ASC
+                            LIMIT (SELECT MAX(1, COUNT(*) / 5) FROM price_cache)
+                        )
+                    """)
+                    conn.execute("VACUUM")
+            except Exception:
+                pass
+
+
+_disk_cache = _DiskCache(CACHE_DB_PATH, CACHE_MAX_BYTES, CACHE_MAX_AGE_SEC)
+_disk_cache.purge_old()
+
+_ET = ZoneInfo("America/New_York")
+
+def _market_aware_ttl(interval: str) -> int:
+    """Return TTL in seconds based on whether US market is currently open."""
+    now_et = datetime.now(_ET)
+    weekday = now_et.weekday()  # 0=Mon, 6=Sun
+    hour_min = now_et.hour * 100 + now_et.minute
+
+    is_market_hours = (weekday < 5) and (930 <= hour_min < 1600)
+
+    if is_market_hours:
+        return 60  # 1 minute during trading
+    # Outside market hours
+    if interval in ("1d", "1wk", "1mo"):
+        return 12 * 3600  # 12 hours for daily+ intervals
+    return 6 * 3600  # 6 hours for intraday intervals
 
 
 def _extract_response_text(payload: dict) -> str:
@@ -702,6 +851,8 @@ def _fetch_price_history_cached(
 ) -> tuple[pd.DataFrame, str]:
     key = (ticker, period, interval, bool(prepost), (source or "auto").strip().lower())
     now = time.time()
+
+    # --- L1: in-memory cache ---
     hit = None
     with _history_cache_lock:
         hit = _history_cache.get(key)
@@ -709,6 +860,17 @@ def _fetch_price_history_cached(
             cached_df = hit.get("df")
             if isinstance(cached_df, pd.DataFrame):
                 return cached_df.copy(), str(hit.get("provider") or "cache")
+
+    # --- L2: disk cache ---
+    disk_ttl = max(ttl_sec, _market_aware_ttl(interval))
+    l2_df, l2_fetched_at = _disk_cache.get(ticker, period, interval, prepost, max_age_sec=disk_ttl)
+    if l2_df is not None and not l2_df.empty:
+        # Promote to L1
+        with _history_cache_lock:
+            _history_cache[key] = {"at": l2_fetched_at, "df": l2_df.copy(), "provider": "disk_cache"}
+        return l2_df.copy(), "disk_cache"
+
+    # --- L3: upstream API ---
     df, provider = fetch_price_history_by_source(
         ticker=ticker,
         period=period,
@@ -719,18 +881,21 @@ def _fetch_price_history_cached(
     if not df.empty:
         with _history_cache_lock:
             _history_cache[key] = {"at": now, "df": df.copy(), "provider": provider}
+        _disk_cache.put(ticker, period, interval, prepost, df)
         return df, provider
 
-    # Upstream can intermittently fail (TLS/rate-limit). Reuse stale successful cache when available.
+    # --- Fallback: stale L1 ---
     if hit is not None:
         cached_df = hit.get("df")
         cached_at = float(hit.get("at", 0.0))
-        if (
-            isinstance(cached_df, pd.DataFrame)
-            and not cached_df.empty
-            and (now - cached_at) < max(60, stale_ttl_sec)
-        ):
+        if isinstance(cached_df, pd.DataFrame) and not cached_df.empty and (now - cached_at) < max(60, stale_ttl_sec):
             return cached_df.copy(), str(hit.get("provider") or "cache_stale")
+
+    # --- Fallback: stale L2 (up to 24h) ---
+    stale_df = _disk_cache.get_stale(ticker, period, interval, prepost, max_stale_sec=86400)
+    if stale_df is not None and not stale_df.empty:
+        return stale_df.copy(), "disk_cache_stale"
+
     return df, provider
 
 
