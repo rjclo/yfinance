@@ -5,3 +5,4 @@ __pycache__/
 
 # local runtime/imported data (may contain private account info)
 data/
+.env
