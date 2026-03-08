@@ -45,6 +45,8 @@ RSI_MONITOR_LOG_PATH = LOG_DIR / "rsi_monitor.jsonl"
 CATEGORY_DIR = BASE_DIR / "data" / "categories"
 CATEGORY_CONFIG_PATH = CATEGORY_DIR / "categories.json"
 
+AI_SETTINGS_PATH = BASE_DIR / "data" / "ai_settings.json"
+
 RSI_MONITOR_INTERVAL_SEC = int(os.getenv("RSI_MONITOR_INTERVAL_SEC", "600"))
 RSI_PERIOD = 14
 
@@ -1107,6 +1109,188 @@ def api_rsi_monitor_status():
     return jsonify(state)
 
 
+def _call_openai(api_key: str, prompt: str, trend_img: str, regime_img: str, override_model: str = "") -> tuple[str, str, dict | None]:
+    model = override_model.strip() if override_model else (os.getenv("OPENAI_CHART_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini")
+    body = {
+        "model": model,
+        "input": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": prompt},
+                    {"type": "input_text", "text": "Trend view screenshot:"},
+                    {"type": "input_image", "image_url": trend_img},
+                    {"type": "input_text", "text": "Regime view screenshot:"},
+                    {"type": "input_image", "image_url": regime_img},
+                ],
+            }
+        ],
+    }
+    req_data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/responses",
+        data=req_data,
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            raw = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace") if exc.fp else str(exc)
+        return "", model, {"error": "OpenAI request failed", "detail": detail[:2000], "status": 502}
+    except Exception as exc:
+        return "", model, {"error": "OpenAI request failed", "detail": str(exc)[:1000], "status": 502}
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return "", model, {"error": "OpenAI response parse failed", "detail": raw[:2000], "status": 502}
+    text = _extract_response_text(obj)
+    if not text:
+        return "", model, {"error": "No explanation text returned from model.", "status": 502}
+    return text, model, None
+
+
+def _call_gemini_model(api_key: str, model: str, parts: list) -> tuple[str, dict | None]:
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+    body = {"contents": [{"parts": parts}]}
+    req_data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=req_data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            raw = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace") if exc.fp else str(exc)
+        return "", {"error": f"Gemini request failed ({model})", "detail": detail[:2000], "status": 502}
+    except Exception as exc:
+        return "", {"error": f"Gemini request failed ({model})", "detail": str(exc)[:1000], "status": 502}
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return "", {"error": f"Gemini response parse failed ({model})", "detail": raw[:2000], "status": 502}
+    candidates = obj.get("candidates") or []
+    chunks: list[str] = []
+    for c in candidates:
+        content = c.get("content") or {}
+        for part in content.get("parts") or []:
+            txt = part.get("text", "").strip()
+            if txt:
+                chunks.append(txt)
+    return "\n\n".join(chunks).strip(), None
+
+
+def _call_gemini(api_key: str, prompt: str, trend_img: str, regime_img: str, override_model: str = "") -> tuple[str, str, dict | None]:
+    explicit = bool(override_model and override_model.strip())
+    model = override_model.strip() if explicit else (os.getenv("GEMINI_CHART_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash")
+    fallback = "gemini-2.0-flash"
+    parts = [
+        {"text": prompt},
+        {"text": "Trend view screenshot:"},
+        {"inline_data": {"mime_type": "image/png", "data": trend_img.split(",", 1)[-1]}} if "," in trend_img else {"text": f"[image: {trend_img[:100]}]"},
+        {"text": "Regime view screenshot:"},
+        {"inline_data": {"mime_type": "image/png", "data": regime_img.split(",", 1)[-1]}} if "," in regime_img else {"text": f"[image: {regime_img[:100]}]"},
+    ]
+    text, err = _call_gemini_model(api_key, model, parts)
+    if text:
+        return text, model, None
+    # Only fallback if the user didn't explicitly pick a model
+    if not explicit and model != fallback:
+        text, err = _call_gemini_model(api_key, fallback, parts)
+        if text:
+            return text, fallback, None
+    return "", model, err or {"error": "No explanation text returned from Gemini.", "status": 502}
+
+
+_AI_PROVIDER_CATALOG = {
+    "openai": {
+        "name": "OpenAI",
+        "env_key": "OPENAI_API_KEY",
+        "model_groups": [
+            {"label": "Free / Low-cost", "models": ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4.1-nano"]},
+            {"label": "Standard", "models": ["gpt-4o", "gpt-4.1", "o3-mini"]},
+            {"label": "Premium", "models": ["o3", "o4-mini"]},
+        ],
+    },
+    "gemini": {
+        "name": "Gemini",
+        "env_key": "GEMINI_API_KEY",
+        "model_groups": [
+            {"label": "Free Tier", "models": ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.5-pro"]},
+            {"label": "Preview", "models": ["gemini-3.1-flash-lite", "gemini-3.1-pro-preview"]},
+        ],
+    },
+}
+
+
+def _load_ai_settings() -> dict:
+    try:
+        if AI_SETTINGS_PATH.exists():
+            return json.loads(AI_SETTINGS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+
+def _save_ai_settings(settings: dict) -> None:
+    AI_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    AI_SETTINGS_PATH.write_text(json.dumps(settings, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _get_ai_key(provider: str) -> str:
+    """Return effective API key: env var takes precedence, then saved settings."""
+    catalog = _AI_PROVIDER_CATALOG.get(provider, {})
+    env_key = os.getenv(catalog.get("env_key", ""), "").strip()
+    if env_key:
+        return env_key
+    saved = _load_ai_settings()
+    return str((saved.get("keys") or {}).get(provider, "")).strip()
+
+
+@app.get("/api/ai-settings")
+def api_get_ai_settings():
+    saved = _load_ai_settings()
+    providers = []
+    for pid, cat in _AI_PROVIDER_CATALOG.items():
+        env_val = os.getenv(cat["env_key"], "").strip()
+        saved_val = str((saved.get("keys") or {}).get(pid, "")).strip()
+        providers.append({
+            "id": pid,
+            "name": cat["name"],
+            "model_groups": cat["model_groups"],
+            "has_key": bool(env_val or saved_val),
+            "key": saved_val or env_val,
+            "key_source": "env" if env_val else ("saved" if saved_val else "none"),
+        })
+    return jsonify({
+        "provider": saved.get("provider", ""),
+        "model": saved.get("model", ""),
+        "providers": providers,
+    })
+
+
+@app.post("/api/ai-settings")
+def api_save_ai_settings():
+    payload = request.get_json(silent=True) or {}
+    provider = str(payload.get("provider", "")).strip().lower()
+    model = str(payload.get("model", "")).strip()
+    keys = payload.get("keys") or {}
+    if not isinstance(keys, dict):
+        keys = {}
+    cleaned_keys = {}
+    for pid in _AI_PROVIDER_CATALOG:
+        val = str(keys.get(pid, "")).strip()
+        if val:
+            cleaned_keys[pid] = val
+    settings = {"provider": provider, "model": model, "keys": cleaned_keys}
+    _save_ai_settings(settings)
+    return jsonify({"ok": True, "settings": settings})
+
+
 @app.post("/api/chart-explain")
 def api_chart_explain():
     payload = request.get_json(silent=True) or {}
@@ -1122,16 +1306,29 @@ def api_chart_explain():
     if not trend_image or not regime_image:
         return jsonify({"error": "trend_image and regime_image are required"}), 400
 
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
-    if not api_key:
+    requested_provider = str(payload.get("provider") or "").strip().lower()
+    requested_model = str(payload.get("model") or "").strip()
+
+    # Resolve provider: use requested, else saved setting, else first available
+    if not requested_provider:
+        saved = _load_ai_settings()
+        requested_provider = saved.get("provider", "")
+    if not requested_provider:
+        for pid in _AI_PROVIDER_CATALOG:
+            if _get_ai_key(pid):
+                requested_provider = pid
+                break
+
+    openai_key = _get_ai_key("openai")
+    gemini_key = _get_ai_key("gemini")
+    if not openai_key and not gemini_key:
         return jsonify(
             {
-                "error": "OPENAI_API_KEY is not set.",
-                "hint": "Set OPENAI_API_KEY in this server shell, restart app.py, then retry.",
+                "error": "No AI API key is configured.",
+                "hint": "Open the AI Explain panel and add an API key in settings.",
             }
         ), 400
 
-    model = os.getenv("OPENAI_CHART_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini"
     window = metrics.get("window") if isinstance(metrics.get("window"), dict) else {}
     summary = metrics.get("summary") if isinstance(metrics.get("summary"), dict) else {}
     indicators = metrics.get("indicators") if isinstance(metrics.get("indicators"), dict) else {}
@@ -1152,53 +1349,19 @@ def api_chart_explain():
         "4) Next Bars Checklist (numbered 1-3)\n"
     )
 
-    body = {
-        "model": model,
-        "input": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "input_text", "text": prompt_text},
-                    {"type": "input_text", "text": "Trend view screenshot:"},
-                    {"type": "input_image", "image_url": trend_image},
-                    {"type": "input_text", "text": "Regime view screenshot:"},
-                    {"type": "input_image", "image_url": regime_image},
-                ],
-            }
-        ],
-    }
+    use_openai = (requested_provider == "openai" and openai_key) or (requested_provider not in ("gemini",) and openai_key)
+    use_gemini = not use_openai and gemini_key
 
-    req_data = json.dumps(body).encode("utf-8")
-    req = urllib.request.Request(
-        "https://api.openai.com/v1/responses",
-        data=req_data,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            raw = resp.read().decode("utf-8")
-    except urllib.error.HTTPError as exc:
-        try:
-            detail = exc.read().decode("utf-8")
-        except Exception:
-            detail = str(exc)
-        return jsonify({"error": "OpenAI request failed", "detail": detail[:2000]}), 502
-    except Exception as exc:
-        return jsonify({"error": "OpenAI request failed", "detail": str(exc)[:1000]}), 502
+    if use_openai:
+        text, model, err = _call_openai(openai_key, prompt_text, trend_image, regime_image, override_model=requested_model)
+    elif use_gemini:
+        text, model, err = _call_gemini(gemini_key, prompt_text, trend_image, regime_image, override_model=requested_model)
+    else:
+        return jsonify({"error": f"Provider '{requested_provider}' not available — no API key configured."}), 400
 
-    try:
-        obj = json.loads(raw)
-    except Exception:
-        return jsonify({"error": "OpenAI response parse failed", "detail": raw[:2000]}), 502
-
-    text = _extract_response_text(obj)
-    if not text:
-        return jsonify({"error": "No explanation text returned from model."}), 502
-    return jsonify({"ok": True, "explanation": text, "model": model})
+    if err:
+        return jsonify(err), err.get("status", 502)
+    return jsonify({"ok": True, "explanation": text, "model": model, "provider": "openai" if use_openai else "gemini"})
 
 
 @app.post("/api/rsi-monitor/run-once")

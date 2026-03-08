@@ -473,6 +473,93 @@
         margin-bottom: 6px;
       }
 
+      .hint-explain-settings {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-bottom: 10px;
+      }
+
+      .ai-setting-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .ai-setting-label {
+        font-size: 12px;
+        font-weight: 600;
+        color: #475569;
+        min-width: 58px;
+      }
+
+      .ai-select {
+        font-size: 12px;
+        padding: 4px 8px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: #fff;
+        color: #0f172a;
+        flex: 1;
+      }
+
+      .ai-key-wrap {
+        display: flex;
+        gap: 4px;
+        flex: 1;
+      }
+
+      .ai-key-input {
+        font-size: 12px;
+        padding: 4px 8px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        flex: 1;
+        min-width: 0;
+        font-family: monospace;
+      }
+
+      .ai-key-toggle {
+        font-size: 11px;
+        padding: 3px 8px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: #f8fafc;
+        color: #475569;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+
+      .ai-setting-actions {
+        display: flex;
+        gap: 6px;
+        margin-top: 4px;
+      }
+
+      .ai-btn {
+        font-size: 12px;
+        padding: 5px 12px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        cursor: pointer;
+      }
+
+      .ai-btn-secondary {
+        background: #f8fafc;
+        color: #334155;
+      }
+
+      .ai-btn-primary {
+        background: #2563eb;
+        color: #fff;
+        border-color: #2563eb;
+      }
+
+      .ai-btn-primary:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
       .hint-explain-body {
         white-space: pre-wrap;
       }
@@ -956,7 +1043,28 @@
               </ol>
               <div class="hint-explain">
                 <div class="hint-explain-title">AI Explain Current Window</div>
-                <div id="hintExplainBody" class="hint-explain-body">Open this hint to generate explanation for the visible chart window.</div>
+                <div class="hint-explain-settings">
+                  <div class="ai-setting-row">
+                    <label class="ai-setting-label">Provider</label>
+                    <select id="aiProviderSelect" class="ai-select"></select>
+                  </div>
+                  <div class="ai-setting-row">
+                    <label class="ai-setting-label">Model</label>
+                    <select id="aiModelSelect" class="ai-select"></select>
+                  </div>
+                  <div class="ai-setting-row">
+                    <label class="ai-setting-label">API Key</label>
+                    <div class="ai-key-wrap">
+                      <input id="aiKeyInput" type="password" class="ai-key-input" placeholder="Enter API key" autocomplete="off" />
+                      <button id="aiKeyToggle" type="button" class="ai-key-toggle">Reveal</button>
+                    </div>
+                  </div>
+                  <div class="ai-setting-actions">
+                    <button id="aiSettingsSaveBtn" type="button" class="ai-btn ai-btn-secondary">Save Settings</button>
+                    <button id="aiExplainBtn" type="button" class="ai-btn ai-btn-primary">Explain</button>
+                  </div>
+                </div>
+                <div id="hintExplainBody" class="hint-explain-body"></div>
               </div>
             </div>
           </div>
@@ -1112,7 +1220,118 @@
       const rulesHintHeader = document.getElementById("rulesHintHeader");
       const rulesHintCloseBtn = document.getElementById("rulesHintCloseBtn");
       const hintExplainBody = document.getElementById("hintExplainBody");
+      const aiProviderSelect = document.getElementById("aiProviderSelect");
+      const aiModelSelect = document.getElementById("aiModelSelect");
+      const aiKeyInput = document.getElementById("aiKeyInput");
+      const aiKeyToggle = document.getElementById("aiKeyToggle");
+      const aiSettingsSaveBtn = document.getElementById("aiSettingsSaveBtn");
+      const aiExplainBtn = document.getElementById("aiExplainBtn");
+      let aiProviders = [];
+      let aiKeys = {};
       let explainRequestSeq = 0;
+
+      async function loadAiSettings() {
+        try {
+          const res = await fetch("/api/ai-settings");
+          const data = await res.json();
+          aiProviders = data.providers || [];
+          aiKeys = {};
+          aiProviders.forEach((p) => { aiKeys[p.id] = p.key || ""; });
+          renderAiProviderSelect(data.provider, data.model);
+        } catch { aiProviders = []; }
+      }
+
+      function renderAiProviderSelect(savedProvider, savedModel) {
+        if (!aiProviderSelect) return;
+        aiProviderSelect.innerHTML = "";
+        aiProviders.forEach((p) => {
+          const opt = document.createElement("option");
+          opt.value = p.id;
+          opt.textContent = p.name;
+          aiProviderSelect.appendChild(opt);
+        });
+        if (savedProvider) aiProviderSelect.value = savedProvider;
+        renderAiModelSelect(savedModel);
+        showCurrentKey();
+      }
+
+      function renderAiModelSelect(savedModel) {
+        if (!aiModelSelect || !aiProviderSelect) return;
+        const provider = aiProviders.find((p) => p.id === aiProviderSelect.value);
+        const groups = provider?.model_groups || [];
+        aiModelSelect.innerHTML = "";
+        groups.forEach((g) => {
+          const optgroup = document.createElement("optgroup");
+          optgroup.label = g.label;
+          (g.models || []).forEach((m) => {
+            const opt = document.createElement("option");
+            opt.value = m;
+            opt.textContent = m;
+            optgroup.appendChild(opt);
+          });
+          aiModelSelect.appendChild(optgroup);
+        });
+        if (savedModel) aiModelSelect.value = savedModel;
+      }
+
+      function showCurrentKey() {
+        if (!aiKeyInput || !aiProviderSelect) return;
+        const pid = aiProviderSelect.value;
+        aiKeyInput.value = aiKeys[pid] || "";
+        aiKeyInput.type = "password";
+        if (aiKeyToggle) aiKeyToggle.textContent = "Reveal";
+      }
+
+      if (aiProviderSelect) {
+        aiProviderSelect.addEventListener("change", () => {
+          renderAiModelSelect("");
+          showCurrentKey();
+        });
+      }
+
+      if (aiKeyToggle && aiKeyInput) {
+        aiKeyToggle.addEventListener("click", () => {
+          const hidden = aiKeyInput.type === "password";
+          aiKeyInput.type = hidden ? "text" : "password";
+          aiKeyToggle.textContent = hidden ? "Hide" : "Reveal";
+        });
+      }
+
+      if (aiKeyInput && aiProviderSelect) {
+        aiKeyInput.addEventListener("input", () => {
+          aiKeys[aiProviderSelect.value] = aiKeyInput.value;
+        });
+      }
+
+      if (aiSettingsSaveBtn) {
+        aiSettingsSaveBtn.addEventListener("click", async () => {
+          aiSettingsSaveBtn.textContent = "Saving...";
+          try {
+            const res = await fetch("/api/ai-settings", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                provider: aiProviderSelect?.value || "",
+                model: aiModelSelect?.value || "",
+                keys: aiKeys,
+              }),
+            });
+            if (!res.ok) throw new Error("Save failed");
+            aiSettingsSaveBtn.textContent = "Saved!";
+            setTimeout(() => { aiSettingsSaveBtn.textContent = "Save Settings"; }, 1500);
+          } catch {
+            aiSettingsSaveBtn.textContent = "Save Failed";
+            setTimeout(() => { aiSettingsSaveBtn.textContent = "Save Settings"; }, 2000);
+          }
+        });
+      }
+
+      loadAiSettings();
+
+      if (aiExplainBtn) {
+        aiExplainBtn.addEventListener("click", () => explainCurrentChartWindow());
+      }
+
       let hintDragActive = false;
       let hintDragOffsetX = 0;
       let hintDragOffsetY = 0;
@@ -4022,6 +4241,7 @@
 
         const reqSeq = ++explainRequestSeq;
         hintExplainBody.textContent = "Generating AI explanation for visible window...";
+        if (aiExplainBtn) { aiExplainBtn.disabled = true; aiExplainBtn.textContent = "Explaining..."; }
 
         const metrics = buildExplainMetrics(payload);
         if (!metrics) {
@@ -4052,6 +4272,8 @@
               metrics,
               trend_image: trendImage,
               regime_image: regimeImage,
+              provider: aiProviderSelect?.value || "",
+              model: aiModelSelect?.value || "",
             }),
           });
           const out = await res.json().catch(() => ({}));
@@ -4068,6 +4290,7 @@
           if (reqSeq !== explainRequestSeq) return;
           hintExplainBody.textContent = `Explain request failed: ${err?.message || err}`;
         } finally {
+          if (aiExplainBtn) { aiExplainBtn.disabled = false; aiExplainBtn.textContent = "Explain"; }
           if (startMode !== bandViewMode) {
             setBandViewMode(startMode);
             refreshBandsOnly([payload]);
@@ -4927,7 +5150,6 @@
           }
           else {
             rulesHintPopover.removeAttribute("hidden");
-            explainCurrentChartWindow();
           }
         });
 
