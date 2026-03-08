@@ -13,17 +13,32 @@ Set your key in the same shell where you run the app.
 export TWELVE_DATA_API_KEY='your_twelve_data_key'
 ```
 
-## Optional: AI Chart Explanation Key
-The hint/lightbulb explain feature requires an OpenAI API key.
+## AI Chart Explanation
+
+The lightbulb icon opens an AI Explain panel that analyzes the visible chart window. It supports **OpenAI** and **Google Gemini** as providers.
+
+### Option A: Configure in the browser (recommended)
+1. Click the lightbulb icon to open the AI Explain panel
+2. Select a provider (OpenAI or Gemini) and model from the grouped dropdown
+3. Enter your API key and click **Save Settings**
+4. Click **Explain** to generate analysis
+
+Settings are saved to `data/ai_settings.json` and persist across sessions.
+
+### Option B: Configure via environment variables
+Env vars override saved settings when set.
 
 ```bash
 export OPENAI_API_KEY='your_openai_api_key'
+# or
+export GEMINI_API_KEY='your_gemini_api_key'
 ```
 
-Optional model override (default is `gpt-4.1-mini`):
+Optional model overrides:
 
 ```bash
-export OPENAI_CHART_MODEL='gpt-4.1-mini'
+export OPENAI_CHART_MODEL='gpt-4.1-mini'    # default
+export GEMINI_CHART_MODEL='gemini-2.5-flash' # default
 ```
 
 ## Option 1: Run With Python
@@ -32,7 +47,6 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 export TWELVE_DATA_API_KEY='your_twelve_data_key'
-export OPENAI_API_KEY='your_openai_api_key'  # optional, for AI explain
 python app.py
 ```
 
@@ -43,7 +57,6 @@ Open [http://127.0.0.1:5000](http://127.0.0.1:5000)
 docker build -t yfinance-app .
 docker run --rm -p 5000:5000 \
   -e TWELVE_DATA_API_KEY='your_twelve_data_key' \
-  -e OPENAI_API_KEY='your_openai_api_key' \
   yfinance-app
 ```
 
@@ -71,3 +84,4 @@ Open [http://localhost:5000](http://localhost:5000)
 - App data is stored under `data/`
 - Server/client logs are under `data/logs/`
 - Category and imported portfolio state is persisted under `data/categories/` and `data/imported_portfolios/`
+- AI provider settings and API keys are stored in `data/ai_settings.json`
