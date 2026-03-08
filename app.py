@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import csv
+import io
 import json
 import logging
 import math
 import os
 import re
+import sqlite3
 import threading
 import time
 import uuid
@@ -47,6 +49,11 @@ CATEGORY_CONFIG_PATH = CATEGORY_DIR / "categories.json"
 
 AI_SETTINGS_PATH = BASE_DIR / "data" / "ai_settings.json"
 
+CACHE_DIR = BASE_DIR / "data" / "cache"
+CACHE_DB_PATH = CACHE_DIR / "market_data.db"
+CACHE_MAX_BYTES = 50 * 1024 * 1024  # 50 MB
+CACHE_MAX_AGE_SEC = 7 * 24 * 3600   # 7 days
+
 RSI_MONITOR_INTERVAL_SEC = int(os.getenv("RSI_MONITOR_INTERVAL_SEC", "600"))
 RSI_PERIOD = 14
 
@@ -64,6 +71,130 @@ _rsi_monitor_state: dict = {
 }
 _history_cache_lock = threading.Lock()
 _history_cache: dict[tuple[str, str, str, bool, str], dict] = {}
+
+
+class _DiskCache:
+    """SQLite-backed L2 cache for market data DataFrames."""
+
+    def __init__(self, db_path: Path, max_bytes: int, max_age_sec: int):
+        self._db_path = db_path
+        self._max_bytes = max_bytes
+        self._max_age_sec = max_age_sec
+        self._lock = threading.Lock()
+        self._ensure_db()
+
+    def _ensure_db(self):
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._connect() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS price_cache (
+                    ticker   TEXT NOT NULL,
+                    period   TEXT NOT NULL,
+                    interval TEXT NOT NULL,
+                    prepost  INTEGER NOT NULL,
+                    fetched_at REAL NOT NULL,
+                    data     BLOB NOT NULL,
+                    PRIMARY KEY (ticker, period, interval, prepost)
+                )
+            """)
+
+    def _connect(self) -> sqlite3.Connection:
+        return sqlite3.connect(str(self._db_path), timeout=5)
+
+    def get(self, ticker: str, period: str, interval: str, prepost: bool, max_age_sec: float) -> tuple[pd.DataFrame | None, float]:
+        """Return (DataFrame, fetched_at) or (None, 0) if miss/stale."""
+        with self._lock:
+            try:
+                with self._connect() as conn:
+                    row = conn.execute(
+                        "SELECT data, fetched_at FROM price_cache WHERE ticker=? AND period=? AND interval=? AND prepost=?",
+                        (ticker, period, interval, int(prepost)),
+                    ).fetchone()
+            except Exception:
+                return None, 0.0
+        if row is None:
+            return None, 0.0
+        blob, fetched_at = row
+        if (time.time() - fetched_at) > max_age_sec:
+            return None, fetched_at
+        try:
+            df = pd.read_parquet(io.BytesIO(blob))
+            return df, fetched_at
+        except Exception:
+            return None, 0.0
+
+    def get_stale(self, ticker: str, period: str, interval: str, prepost: bool, max_stale_sec: float = 86400) -> pd.DataFrame | None:
+        """Return DataFrame even if stale, up to max_stale_sec old. For fallback on API failure."""
+        with self._lock:
+            try:
+                with self._connect() as conn:
+                    row = conn.execute(
+                        "SELECT data, fetched_at FROM price_cache WHERE ticker=? AND period=? AND interval=? AND prepost=?",
+                        (ticker, period, interval, int(prepost)),
+                    ).fetchone()
+            except Exception:
+                return None
+        if row is None:
+            return None
+        blob, fetched_at = row
+        if (time.time() - fetched_at) > max_stale_sec:
+            return None
+        try:
+            return pd.read_parquet(io.BytesIO(blob))
+        except Exception:
+            return None
+
+    def put(self, ticker: str, period: str, interval: str, prepost: bool, df: pd.DataFrame):
+        """Write DataFrame to cache. Triggers eviction if over size limit."""
+        buf = io.BytesIO()
+        df.to_parquet(buf, index=True, compression="snappy")
+        blob = buf.getvalue()
+        with self._lock:
+            try:
+                with self._connect() as conn:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO price_cache (ticker, period, interval, prepost, fetched_at, data) VALUES (?, ?, ?, ?, ?, ?)",
+                        (ticker, period, interval, int(prepost), time.time(), blob),
+                    )
+            except Exception:
+                return
+        self._maybe_evict()
+
+    def purge_old(self):
+        """Delete rows older than max_age_sec. Called on startup."""
+        cutoff = time.time() - self._max_age_sec
+        with self._lock:
+            try:
+                with self._connect() as conn:
+                    conn.execute("DELETE FROM price_cache WHERE fetched_at < ?", (cutoff,))
+                    conn.execute("VACUUM")
+            except Exception:
+                pass
+
+    def _maybe_evict(self):
+        """If DB file exceeds max_bytes, delete oldest rows until under limit."""
+        try:
+            size = self._db_path.stat().st_size
+        except OSError:
+            return
+        if size <= self._max_bytes:
+            return
+        with self._lock:
+            try:
+                with self._connect() as conn:
+                    conn.execute("""
+                        DELETE FROM price_cache WHERE rowid IN (
+                            SELECT rowid FROM price_cache ORDER BY fetched_at ASC
+                            LIMIT (SELECT MAX(1, COUNT(*) / 5) FROM price_cache)
+                        )
+                    """)
+                    conn.execute("VACUUM")
+            except Exception:
+                pass
+
+
+_disk_cache = _DiskCache(CACHE_DB_PATH, CACHE_MAX_BYTES, CACHE_MAX_AGE_SEC)
+_disk_cache.purge_old()
 
 
 def _extract_response_text(payload: dict) -> str:
