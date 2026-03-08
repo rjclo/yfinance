@@ -851,6 +851,8 @@ def _fetch_price_history_cached(
 ) -> tuple[pd.DataFrame, str]:
     key = (ticker, period, interval, bool(prepost), (source or "auto").strip().lower())
     now = time.time()
+
+    # --- L1: in-memory cache ---
     hit = None
     with _history_cache_lock:
         hit = _history_cache.get(key)
@@ -858,6 +860,17 @@ def _fetch_price_history_cached(
             cached_df = hit.get("df")
             if isinstance(cached_df, pd.DataFrame):
                 return cached_df.copy(), str(hit.get("provider") or "cache")
+
+    # --- L2: disk cache ---
+    disk_ttl = max(ttl_sec, _market_aware_ttl(interval))
+    l2_df, l2_fetched_at = _disk_cache.get(ticker, period, interval, prepost, max_age_sec=disk_ttl)
+    if l2_df is not None and not l2_df.empty:
+        # Promote to L1
+        with _history_cache_lock:
+            _history_cache[key] = {"at": l2_fetched_at, "df": l2_df.copy(), "provider": "disk_cache"}
+        return l2_df.copy(), "disk_cache"
+
+    # --- L3: upstream API ---
     df, provider = fetch_price_history_by_source(
         ticker=ticker,
         period=period,
@@ -868,18 +881,21 @@ def _fetch_price_history_cached(
     if not df.empty:
         with _history_cache_lock:
             _history_cache[key] = {"at": now, "df": df.copy(), "provider": provider}
+        _disk_cache.put(ticker, period, interval, prepost, df)
         return df, provider
 
-    # Upstream can intermittently fail (TLS/rate-limit). Reuse stale successful cache when available.
+    # --- Fallback: stale L1 ---
     if hit is not None:
         cached_df = hit.get("df")
         cached_at = float(hit.get("at", 0.0))
-        if (
-            isinstance(cached_df, pd.DataFrame)
-            and not cached_df.empty
-            and (now - cached_at) < max(60, stale_ttl_sec)
-        ):
+        if isinstance(cached_df, pd.DataFrame) and not cached_df.empty and (now - cached_at) < max(60, stale_ttl_sec):
             return cached_df.copy(), str(hit.get("provider") or "cache_stale")
+
+    # --- Fallback: stale L2 (up to 24h) ---
+    stale_df = _disk_cache.get_stale(ticker, period, interval, prepost, max_stale_sec=86400)
+    if stale_df is not None and not stale_df.empty:
+        return stale_df.copy(), "disk_cache_stale"
+
     return df, provider
 
 
