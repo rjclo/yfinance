@@ -311,6 +311,32 @@
         background: #e2e8f0;
       }
 
+      .row-actions-submenu-wrap {
+        position: relative;
+      }
+
+      .row-actions-submenu-trigger {
+        cursor: default;
+      }
+
+      .row-actions-submenu {
+        display: none;
+        position: absolute;
+        left: 100%;
+        top: 0;
+        min-width: 130px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: #fff;
+        box-shadow: 0 12px 26px rgba(17, 24, 39, 0.14);
+        padding: 6px;
+        z-index: 1301;
+      }
+
+      .row-actions-submenu-wrap:hover > .row-actions-submenu {
+        display: block;
+      }
+
       .ticker-pressure {
         margin-top: 6px;
       }
@@ -1008,8 +1034,8 @@
     <div class="wrap">
       <div class="layout">
         <aside class="panel sidebar">
-          <div class="side-title">Ticker Categories (max selected: 5)</div>
-          <div id="selectedCount" class="chip">0 selected</div>
+          <div class="side-title">Watchlists</div>
+          <div id="selectedCount" class="chip">0 / 5 tickers on chart</div>
           <div id="leftTabs" class="chrome-tab-strip left-tab-strip" style="margin-top:8px;"></div>
           <div id="pressureOverall" class="pressure-panel"></div>
           <div id="tickerList" class="ticker-list"></div>
@@ -1138,6 +1164,7 @@
       const STORAGE_KEY = "yf_saved_tickers_v2";
       const AUTO_REFRESH_KEY = "yf_auto_refresh_5m";
       const MAX_SELECTED = 5;
+      const MAX_TICKERS_PER_CATEGORY = 16;
       const AUTO_REFRESH_MS = 5 * 60 * 1000;
       const DEFAULT_TICKERS = [];
       const COLORS = ["#0284c7", "#dc2626", "#16a34a", "#7c3aed", "#ea580c"];
@@ -1734,6 +1761,7 @@
             renderLeftTabs();
             renderTickerList();
             logAction("left_tab_open", { tab_id: c.id, name: c.name });
+            loadData();
           });
           b.addEventListener('contextmenu', (ev) => {
             ev.preventDefault();
@@ -1746,12 +1774,14 @@
           leftTabsEl.appendChild(b);
         });
 
-        const addTab = document.createElement('button');
-        addTab.type = 'button';
-        addTab.textContent = '+';
-        addTab.className = 'chrome-tab add-tab';
-        addTab.addEventListener('click', addLeftCategory);
-        leftTabsEl.appendChild(addTab);
+        if (leftCategories.length < MAX_CATEGORIES) {
+          const addTab = document.createElement('button');
+          addTab.type = 'button';
+          addTab.textContent = '+';
+          addTab.className = 'chrome-tab add-tab';
+          addTab.addEventListener('click', addLeftCategory);
+          leftTabsEl.appendChild(addTab);
+        }
       }
 
       function renameLeftCategoryById(tabId) {
@@ -1815,7 +1845,13 @@
         }
       }
 
+      const MAX_CATEGORIES = 8;
+
       function addLeftCategory() {
+        if (leftCategories.length >= MAX_CATEGORIES) {
+          errorEl.textContent = `Maximum ${MAX_CATEGORIES} categories allowed.`;
+          return;
+        }
         const name = (window.prompt('New tab name:', 'Category') || '').trim();
         if (!name) return;
         const id = `cat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -1843,6 +1879,7 @@
         renderTickerList();
         logAction("left_tab_delete", { tab_id: tabId, name: target.name });
         queueLeftCategoriesAutoSave("delete_tab");
+        loadData();
       }
 
       function addHoldingToCategories(holding, tabIds) {
@@ -1853,6 +1890,7 @@
         const sourceHoldingId = String(holding?.sourceHoldingId || holding?.id || "").trim();
         leftCategories = leftCategories.map((c) => {
           if (!ids.includes(c.id)) return c;
+          if ((c.items || []).length >= MAX_TICKERS_PER_CATEGORY) return c;
           const existingIdx = (c.items || []).findIndex((x) => String(x.id) === String(holding.id));
           if (existingIdx >= 0) {
             const nextItems = [...(c.items || [])];
@@ -1947,16 +1985,38 @@
         menu.className = "row-actions-menu";
 
         (actions || []).forEach((a) => {
-          if (!a || !a.label || typeof a.onClick !== "function") return;
-          const btn = document.createElement("button");
-          btn.type = "button";
-          btn.className = "row-actions-item";
-          btn.textContent = a.label;
-          btn.addEventListener("click", () => {
-            closeRowActionsMenu();
-            a.onClick();
-          });
-          menu.appendChild(btn);
+          if (!a || !a.label) return;
+          if (a.children && a.children.length) {
+            const wrap = document.createElement("div");
+            wrap.className = "row-actions-submenu-wrap";
+            const trigger = document.createElement("button");
+            trigger.type = "button";
+            trigger.className = "row-actions-item row-actions-submenu-trigger";
+            trigger.textContent = a.label + " ▸";
+            wrap.appendChild(trigger);
+            const sub = document.createElement("div");
+            sub.className = "row-actions-submenu";
+            a.children.forEach((ch) => {
+              const btn = document.createElement("button");
+              btn.type = "button";
+              btn.className = "row-actions-item";
+              btn.textContent = ch.label;
+              btn.addEventListener("click", () => { closeRowActionsMenu(); ch.onClick(); });
+              sub.appendChild(btn);
+            });
+            wrap.appendChild(sub);
+            menu.appendChild(wrap);
+          } else if (typeof a.onClick === "function") {
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "row-actions-item";
+            btn.textContent = a.label;
+            btn.addEventListener("click", () => {
+              closeRowActionsMenu();
+              a.onClick();
+            });
+            menu.appendChild(btn);
+          }
         });
 
         if (!menu.children.length) return;
@@ -2122,15 +2182,9 @@
       }
 
       function getSelectedSymbols() {
-        const fromLeft = leftCategories.flatMap((c) => (c.items || []).filter((t) => t.selected).map((t) => t.symbol));
-        const importedSelected = importedPortfolios.flatMap((p) =>
-          (p.tickers || []).filter((t) => t.selected).map((t) => t.symbol)
-        );
-        const all = [
-          ...fromLeft,
-          ...importedSelected,
-        ];
-        return Array.from(new Set(all)).slice(0, MAX_SELECTED);
+        const active = getActiveCategory();
+        const fromActive = active ? (active.items || []).filter((t) => t.selected).map((t) => t.symbol) : [];
+        return Array.from(new Set(fromActive)).slice(0, MAX_SELECTED);
       }
 
       function getSelectedImportedHoldings() {
@@ -2641,8 +2695,8 @@
       }
 
       function updateSelectedCount() {
-        const count = getTotalSelectedCount();
-        selectedCount.textContent = `${count} selected`;
+        const onChart = getSelectedSymbols().length;
+        selectedCount.textContent = `${onChart} / ${MAX_SELECTED} on chart`;
         renderHoldingsSummary();
       }
 
@@ -2773,6 +2827,12 @@
           checkbox.checked = !!t.selected;
           checkbox.addEventListener("change", (e) => {
             const checked = !!e.target.checked;
+            if (checked && getSelectedSymbols().length >= MAX_SELECTED) {
+              errorEl.textContent = `You can select up to ${MAX_SELECTED} tickers.`;
+              e.target.checked = false;
+              return;
+            }
+            errorEl.textContent = "";
             leftCategories = leftCategories.map((c) => {
               if (c.id !== active.id) return c;
               return { ...c, items: (c.items || []).map((it) => String(it.id) === String(t.id) ? { ...it, selected: checked } : it) };
@@ -2799,7 +2859,7 @@
           actionsBtn.innerHTML = "&#8942;";
           actionsBtn.addEventListener("click", (ev) => {
             ev.stopPropagation();
-            openRowActionsMenu(ev.clientX, ev.clientY, [
+            const rowActions = [
               {
                 label: "Edit shares",
                 onClick: () => editLeftTickerShares(active.id, t.id),
@@ -2819,7 +2879,42 @@
                   loadData();
                 },
               },
-            ]);
+            ];
+            const moveTargets = leftCategories.filter((c) => c.id !== active.id && (c.items || []).length < MAX_TICKERS_PER_CATEGORY);
+            if (moveTargets.length) {
+              rowActions.push({
+                label: "Move to",
+                children: moveTargets.map((target) => ({
+                  label: target.name || target.id,
+                  onClick: () => {
+                    const item = { ...t };
+                    leftCategories = leftCategories.map((c) => {
+                      if (c.id === active.id) return { ...c, items: (c.items || []).filter((it) => String(it.id) !== String(t.id)) };
+                      if (c.id === target.id) return { ...c, items: [...(c.items || []), item] };
+                      return c;
+                    });
+                    if (active.id === "default" && (t.source || "") === "manual") {
+                      tickers = tickers.filter((x) => x.symbol !== t.symbol);
+                      saveTickers();
+                      syncDefaultCategoryFromTickers();
+                    }
+                    if (target.id === "default" && (item.source || "") === "manual") {
+                      if (!tickers.some((x) => x.symbol === item.symbol)) {
+                        tickers.push({ symbol: item.symbol, selected: !!item.selected });
+                        saveTickers();
+                        syncDefaultCategoryFromTickers();
+                      }
+                    }
+                    logAction("left_ticker_move", { from: active.id, to: target.id, symbol: t.symbol });
+                    renderTickerList();
+                    renderLeftTabs();
+                    queueLeftCategoriesAutoSave("move_left_ticker");
+                    loadData();
+                  },
+                })),
+              });
+            }
+            openRowActionsMenu(ev.clientX, ev.clientY, rowActions);
           });
 
           top.appendChild(label);
@@ -4977,14 +5072,49 @@
           return;
         }
 
-        if (tickers.some((t) => t.symbol === symbol) || getAllImportedTickers().some((t) => t.symbol === symbol)) {
-          errorEl.textContent = `${symbol} is already in your lists.`;
+        const active = getActiveCategory();
+        const activeCatId = active ? active.id : "default";
+
+        // Check if symbol already exists in the active category
+        if (active && (active.items || []).some((it) => it.symbol === symbol)) {
+          errorEl.textContent = `${symbol} is already in this category.`;
+          return;
+        }
+
+        if (active && (active.items || []).length >= MAX_TICKERS_PER_CATEGORY) {
+          errorEl.textContent = `Maximum ${MAX_TICKERS_PER_CATEGORY} tickers per category.`;
           return;
         }
 
         const selectedNow = getTotalSelectedCount();
-        tickers.unshift({ symbol, selected: selectedNow < MAX_SELECTED });
-        logAction("saved_ticker_added", { symbol, auto_selected: selectedNow < MAX_SELECTED });
+        const autoSelect = selectedNow < MAX_SELECTED;
+
+        if (activeCatId === "default") {
+          // Original behavior: add to tickers array and sync default category
+          tickers.unshift({ symbol, selected: autoSelect });
+          saveTickers();
+          syncDefaultCategoryFromTickers();
+        } else {
+          // Add directly to the active category
+          const newItem = {
+            id: `${symbol}@@${Date.now()}`,
+            symbol: symbol,
+            account: '',
+            label: symbol,
+            selected: autoSelect,
+            source: 'manual',
+            sourceTab: '',
+            sourcePortfolioId: '',
+            sourceHoldingId: '',
+            shares: null,
+          };
+          leftCategories = leftCategories.map((c) =>
+            c.id === activeCatId ? { ...c, items: [newItem, ...(c.items || [])] } : c
+          );
+          queueLeftCategoriesAutoSave("add_ticker_to_category");
+        }
+
+        logAction("saved_ticker_added", { symbol, category: activeCatId, auto_selected: autoSelect });
 
         if (selectedNow >= MAX_SELECTED) {
           errorEl.textContent = `Added ${symbol}. Select it by unchecking another ticker first.`;
@@ -4993,8 +5123,6 @@
         }
 
         tickerInput.value = "";
-        saveTickers();
-        syncDefaultCategoryFromTickers();
         renderLeftTabs();
         renderTickerList();
         loadData();
