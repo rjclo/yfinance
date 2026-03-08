@@ -16,6 +16,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Tuple
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 from flask import Flask, g, jsonify, render_template, request
@@ -195,6 +196,23 @@ class _DiskCache:
 
 _disk_cache = _DiskCache(CACHE_DB_PATH, CACHE_MAX_BYTES, CACHE_MAX_AGE_SEC)
 _disk_cache.purge_old()
+
+_ET = ZoneInfo("America/New_York")
+
+def _market_aware_ttl(interval: str) -> int:
+    """Return TTL in seconds based on whether US market is currently open."""
+    now_et = datetime.now(_ET)
+    weekday = now_et.weekday()  # 0=Mon, 6=Sun
+    hour_min = now_et.hour * 100 + now_et.minute
+
+    is_market_hours = (weekday < 5) and (930 <= hour_min < 1600)
+
+    if is_market_hours:
+        return 60  # 1 minute during trading
+    # Outside market hours
+    if interval in ("1d", "1wk", "1mo"):
+        return 12 * 3600  # 12 hours for daily+ intervals
+    return 6 * 3600  # 6 hours for intraday intervals
 
 
 def _extract_response_text(payload: dict) -> str:
