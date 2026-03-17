@@ -41,12 +41,21 @@ export OPENAI_CHART_MODEL='gpt-4.1-mini'    # default
 export GEMINI_CHART_MODEL='gemini-2.5-flash' # default
 ```
 
+## Optional: Finnhub News Key
+The ticker `News` popup uses Finnhub and requires a Finnhub API key.
+
+```bash
+export FINNHUB_API_KEY='your_finnhub_api_key'
+```
+
 ## Option 1: Run With Python
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 export TWELVE_DATA_API_KEY='your_twelve_data_key'
+export OPENAI_API_KEY='your_openai_api_key'  # optional, for AI explain
+export FINNHUB_API_KEY='your_finnhub_api_key'  # optional, for ticker news
 python app.py
 ```
 
@@ -57,6 +66,8 @@ Open [http://127.0.0.1:5000](http://127.0.0.1:5000)
 docker build -t yfinance-app .
 docker run --rm -p 5000:5000 \
   -e TWELVE_DATA_API_KEY='your_twelve_data_key' \
+  -e OPENAI_API_KEY='your_openai_api_key' \
+  -e FINNHUB_API_KEY='your_finnhub_api_key' \
   yfinance-app
 ```
 

@@ -12,8 +12,9 @@ import threading
 import time
 import uuid
 import urllib.error
+import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Tuple
 from zoneinfo import ZoneInfo
@@ -72,6 +73,8 @@ _rsi_monitor_state: dict = {
 }
 _history_cache_lock = threading.Lock()
 _history_cache: dict[tuple[str, str, str, bool, str], dict] = {}
+_news_cache_lock = threading.Lock()
+_news_cache: dict[str, dict] = {}
 
 
 class _DiskCache:
@@ -233,6 +236,77 @@ def _extract_response_text(payload: dict) -> str:
             if isinstance(txt, str) and txt.strip():
                 chunks.append(txt.strip())
     return "\n\n".join(chunks).strip()
+
+
+def _fetch_finnhub_news_cached(ticker: str, day_window: int = 10, ttl_sec: int = 300) -> list[dict]:
+    symbol = _sanitize_ticker(ticker)
+    if not symbol:
+        raise ValueError("Ticker is required.")
+
+    api_key = (os.getenv("FINNHUB_API_KEY") or "").strip()
+    if not api_key:
+        raise ValueError("FINNHUB_API_KEY is not configured.")
+
+    now = time.time()
+    with _news_cache_lock:
+        hit = _news_cache.get(symbol)
+        if hit and (now - float(hit.get("at", 0.0))) < ttl_sec:
+            cached_items = hit.get("items")
+            if isinstance(cached_items, list):
+                return list(cached_items)
+
+    end_dt = datetime.now(timezone.utc).date()
+    start_dt = end_dt - timedelta(days=max(2, int(day_window)))
+    params = urllib.parse.urlencode(
+        {
+            "symbol": symbol,
+            "from": start_dt.isoformat(),
+            "to": end_dt.isoformat(),
+            "token": api_key,
+        }
+    )
+    url = f"https://finnhub.io/api/v1/company-news?{params}"
+
+    try:
+        with urllib.request.urlopen(url, timeout=15) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="ignore")
+        msg = body.strip() or str(exc)
+        raise ValueError(f"Finnhub HTTP {exc.code}: {msg}") from exc
+    except urllib.error.URLError as exc:
+        raise ValueError(f"Finnhub request failed: {exc.reason}") from exc
+
+    if not isinstance(payload, list):
+        raise ValueError("Finnhub returned an unexpected response.")
+
+    items: list[dict] = []
+    for raw in payload[:25]:
+        if not isinstance(raw, dict):
+            continue
+        headline = str(raw.get("headline") or "").strip()
+        url = str(raw.get("url") or "").strip()
+        if not headline or not url:
+            continue
+        ts = raw.get("datetime")
+        try:
+            published_at = datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat() if ts else None
+        except Exception:
+            published_at = None
+        items.append(
+            {
+                "headline": headline,
+                "source": str(raw.get("source") or "").strip(),
+                "summary": str(raw.get("summary") or "").strip(),
+                "url": url,
+                "published_at": published_at,
+                "image": str(raw.get("image") or "").strip(),
+            }
+        )
+
+    with _news_cache_lock:
+        _news_cache[symbol] = {"at": now, "items": list(items)}
+    return items
 
 
 def _ensure_portfolio_storage() -> None:
@@ -642,6 +716,11 @@ def _materialize_portfolio(item: dict) -> dict:
 
     selected_keys = {str(s).strip() for s in item.get("selected_keys", []) if str(s).strip()}
     removed_keys = {str(s).strip() for s in item.get("removed_keys", []) if str(s).strip()}
+    symbol_overrides = {
+        str(k).strip(): _sanitize_ticker(v)
+        for k, v in (item.get("symbol_overrides") or {}).items()
+        if str(k).strip() and _sanitize_ticker(v)
+    }
 
     # backward compatibility with older symbol-only config
     selected_symbols = {_sanitize_ticker(s) for s in item.get("selected_symbols", [])}
@@ -655,9 +734,13 @@ def _materialize_portfolio(item: dict) -> dict:
         try:
             holdings = _extract_holdings_from_csv(csv_path)
             for h in holdings:
-                s = _sanitize_ticker(h.get("symbol"))
+                original_symbol = _sanitize_ticker(h.get("symbol"))
+                s = original_symbol
                 acct = _sanitize_account(h.get("account")) if h.get("account") else ""
                 key = _holding_key(s, acct)
+                override_symbol = symbol_overrides.get(key)
+                if override_symbol:
+                    s = override_symbol
                 if not s:
                     continue
                 if key in removed_keys or s in removed_symbols:
@@ -671,6 +754,7 @@ def _materialize_portfolio(item: dict) -> dict:
                     {
                         "id": key,
                         "symbol": s,
+                        "original_symbol": original_symbol,
                         "account": acct or None,
                         "selected": selected,
                         "shares": h.get("shares"),
@@ -694,6 +778,7 @@ def _materialize_portfolio(item: dict) -> dict:
         "removed_keys": sorted(list(removed_keys)),
         "selected_symbols": sorted([s for s in selected_symbols if s in valid_symbols]),
         "removed_symbols": sorted(list(removed_symbols)),
+        "symbol_overrides": symbol_overrides,
         "missing_file": missing_file,
     }
 
@@ -1131,6 +1216,11 @@ def api_save_portfolios():
         removed_keys = [str(s).strip() for s in incoming.get("removed_keys", []) if str(s).strip()]
         selected = [_sanitize_ticker(s) for s in incoming.get("selected_symbols", []) if _sanitize_ticker(s)]
         removed = [_sanitize_ticker(s) for s in incoming.get("removed_symbols", []) if _sanitize_ticker(s)]
+        symbol_overrides = {
+            str(k).strip(): _sanitize_ticker(v)
+            for k, v in (incoming.get("symbol_overrides") or {}).items()
+            if str(k).strip() and _sanitize_ticker(v)
+        }
 
         next_items.append(
             {
@@ -1142,6 +1232,7 @@ def api_save_portfolios():
                 "removed_keys": sorted(list(set(removed_keys))),
                 "selected_symbols": sorted(list(set(selected))),
                 "removed_symbols": sorted(list(set(removed))),
+                "symbol_overrides": symbol_overrides,
                 "created_at": base.get("created_at"),
             }
         )
@@ -1527,6 +1618,18 @@ def api_chart_explain():
     if err:
         return jsonify(err), err.get("status", 502)
     return jsonify({"ok": True, "explanation": text, "model": model, "provider": "openai" if use_openai else "gemini"})
+
+
+@app.get("/api/news")
+def api_news():
+    ticker = _sanitize_ticker(request.args.get("ticker"))
+    if not ticker:
+        return jsonify({"error": "ticker is required"}), 400
+    try:
+        items = _fetch_finnhub_news_cached(ticker)
+        return jsonify({"ticker": ticker, "items": items})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 502
 
 
 @app.post("/api/rsi-monitor/run-once")

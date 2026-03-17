@@ -594,6 +594,102 @@
         display: none;
       }
 
+      .news-dialog {
+        position: fixed;
+        top: 96px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 1810;
+        width: min(720px, calc(100vw - 40px));
+        height: min(72vh, 760px);
+        min-width: 360px;
+        min-height: 240px;
+        max-width: calc(100vw - 16px);
+        max-height: calc(100vh - 16px);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: #fff;
+        box-shadow: 0 14px 30px rgba(15, 23, 42, 0.18);
+        overflow: hidden;
+        resize: both;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .news-dialog[hidden] {
+        display: none;
+      }
+
+      .news-dialog-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--border);
+        background: #f8fafc;
+        cursor: move;
+        user-select: none;
+      }
+
+      .news-dialog-title {
+        font-weight: 700;
+        color: #0f172a;
+        font-size: 14px;
+      }
+
+      .news-dialog-close {
+        border: 1px solid var(--border);
+        background: #fff;
+        border-radius: 8px;
+        padding: 4px 9px;
+        line-height: 1;
+        font-size: 14px;
+      }
+
+      .news-dialog-body {
+        padding: 12px;
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: auto;
+      }
+
+      .news-list {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .news-item {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px 12px;
+        background: #fff;
+      }
+
+      .news-item-headline {
+        font-weight: 700;
+        color: #0f172a;
+        text-decoration: none;
+      }
+
+      .news-item-headline:hover {
+        text-decoration: underline;
+      }
+
+      .news-item-meta {
+        margin-top: 4px;
+        color: #64748b;
+        font-size: 12px;
+      }
+
+      .news-item-summary {
+        margin-top: 8px;
+        color: #334155;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
       .ma-controls label {
         font-size: 12px;
         color: #334155;
@@ -1094,6 +1190,13 @@
               </div>
             </div>
           </div>
+          <div id="newsDialog" class="news-dialog" hidden>
+            <div id="newsDialogHeader" class="news-dialog-header">
+              <div id="newsDialogTitle" class="news-dialog-title">Ticker News</div>
+              <button id="newsDialogCloseBtn" class="news-dialog-close" type="button" aria-label="Close news">X</button>
+            </div>
+            <div id="newsDialogBody" class="news-dialog-body">Select a ticker to load recent news.</div>
+          </div>
           <div class="controls">
             <button id="centerMenuBtn" class="controls-menu-btn" title="Actions">&#8942;</button>
             <input id="tickerInput" class="ticker-input" placeholder="Add ticker" maxlength="12" />
@@ -1163,6 +1266,8 @@
     <script>
       const STORAGE_KEY = "yf_saved_tickers_v2";
       const AUTO_REFRESH_KEY = "yf_auto_refresh_5m";
+      const NEWS_POPUP_KEY = "yf_news_popup_enabled";
+      const NEWS_LAST_TICKER_KEY = "yf_news_last_ticker";
       const MAX_SELECTED = 5;
       const MAX_TICKERS_PER_CATEGORY = 16;
       const AUTO_REFRESH_MS = 5 * 60 * 1000;
@@ -1200,6 +1305,7 @@
       let trendSensitivity = 50;
       let autoRefreshEnabled = false;
       let autoRefreshTimer = null;
+      let newsPopupEnabled = (localStorage.getItem(NEWS_POPUP_KEY) ?? "1") !== "0";
       let bandViewMode = "trend";
       let chartTypeMode = "line";
       const viewportByRange = {};
@@ -1255,6 +1361,11 @@
       const aiExplainBtn = document.getElementById("aiExplainBtn");
       let aiProviders = [];
       let aiKeys = {};
+      const newsDialog = document.getElementById("newsDialog");
+      const newsDialogHeader = document.getElementById("newsDialogHeader");
+      const newsDialogTitle = document.getElementById("newsDialogTitle");
+      const newsDialogCloseBtn = document.getElementById("newsDialogCloseBtn");
+      const newsDialogBody = document.getElementById("newsDialogBody");
       let explainRequestSeq = 0;
 
       async function loadAiSettings() {
@@ -1362,6 +1473,10 @@
       let hintDragActive = false;
       let hintDragOffsetX = 0;
       let hintDragOffsetY = 0;
+      let newsDragActive = false;
+      let newsDragOffsetX = 0;
+      let newsDragOffsetY = 0;
+      let activeNewsTicker = localStorage.getItem(NEWS_LAST_TICKER_KEY) || "";
 
       function sanitizeTicker(raw) {
         return (raw || "").toUpperCase().replace(/[^A-Z0-9.\-]/g, "").slice(0, 12);
@@ -1423,8 +1538,69 @@
         logAction("auto_refresh_toggle", { enabled: autoRefreshEnabled, interval_ms: AUTO_REFRESH_MS });
       }
 
+      function setNewsPopupEnabled(enabled) {
+        newsPopupEnabled = !!enabled;
+        localStorage.setItem(NEWS_POPUP_KEY, newsPopupEnabled ? "1" : "0");
+        logAction("news_popup_toggle", { enabled: newsPopupEnabled });
+        if (newsPopupEnabled) {
+          syncNewsPopupToSelection("popup_enabled");
+        } else if (newsDialog && !newsDialog.hasAttribute("hidden")) {
+          newsDialog.setAttribute("hidden", "");
+          newsDragActive = false;
+        }
+      }
+
+      function setActiveNewsTicker(symbol) {
+        activeNewsTicker = sanitizeTicker(symbol);
+        if (activeNewsTicker) {
+          localStorage.setItem(NEWS_LAST_TICKER_KEY, activeNewsTicker);
+        } else {
+          localStorage.removeItem(NEWS_LAST_TICKER_KEY);
+        }
+      }
+
+      function syncNewsPopupToSelection(reason = "selection_change") {
+        if (!newsDialog) return;
+        const selected = getSelectedSymbols();
+        if (!newsPopupEnabled || !selected.length) {
+          if (!newsDialog.hasAttribute("hidden")) {
+            newsDialog.setAttribute("hidden", "");
+            newsDragActive = false;
+          }
+          if (!selected.length) setActiveNewsTicker("");
+          logAction("ticker_news_sync", { reason, selected_count: selected.length, action: "close" });
+          return;
+        }
+        const preferred = selected.includes(sanitizeTicker(activeNewsTicker)) ? sanitizeTicker(activeNewsTicker) : selected[0];
+        logAction("ticker_news_sync", { reason, selected_count: selected.length, preferred });
+        openTickerNews(preferred);
+      }
+
+      function handleTickerRowClickForNews(event, symbol) {
+        const target = event?.target;
+        const targetTag = target?.tagName || "";
+        const blockedByControl = !!(target && typeof target.closest === "function" && (target.closest("input") || target.closest("button") || target.closest(".row-actions-menu")));
+        logAction("ticker_row_click", {
+          ticker: sanitizeTicker(symbol),
+          news_popup_enabled: !!newsPopupEnabled,
+          target_tag: targetTag,
+          blocked_by_control: blockedByControl,
+        });
+        if (!newsPopupEnabled) return;
+        if (target && typeof target.closest === "function") {
+          if (target.closest("input") || target.closest("button") || target.closest(".row-actions-menu")) {
+            return;
+          }
+        }
+        openTickerNews(symbol);
+      }
+
       function isFullscreenActive() {
         return !!(document.fullscreenElement || document.webkitFullscreenElement);
+      }
+
+      function getMenuHost() {
+        return document.fullscreenElement || document.webkitFullscreenElement || document.body;
       }
 
       function debugLayoutState(label) {
@@ -1643,6 +1819,7 @@
                     return {
                       id: holdingId,
                       symbol,
+                      originalSymbol: sanitizeTicker(t?.original_symbol || t?.originalSymbol || symbol),
                       account,
                       selected: !!t?.selected,
                       shares: Number.isFinite(Number(t?.shares)) ? Number(t?.shares) : null,
@@ -1663,6 +1840,11 @@
               csvPath: String(p?.csv_path || ""),
               missingFile: !!p?.missing_file,
               removedKeys: Array.from(new Set(removedKeys)),
+              symbolOverrides: Object.fromEntries(
+                Object.entries(p?.symbol_overrides || p?.symbolOverrides || {})
+                  .map(([k, v]) => [String(k || "").trim(), sanitizeTicker(v)])
+                  .filter(([k, v]) => k && v)
+              ),
               tickers,
             };
           })
@@ -1951,24 +2133,12 @@
             deleteLeftCategory(activeLeftCategoryId);
           });
           menu.appendChild(deleteBtn);
-        } else {
-          const saveBtn = document.createElement("button");
-          saveBtn.type = "button";
-          saveBtn.className = "tab-actions-item";
-          saveBtn.textContent = "Save";
-          saveBtn.addEventListener("click", () => {
-            logAction("right_tab_menu_save_click", { portfolio_count: importedPortfolios.length });
-            saveImportedPortfoliosToServer();
-            closePanelActionsMenu();
-            closeRowActionsMenu();
-          });
-          menu.appendChild(saveBtn);
         }
 
         menu.style.left = String(Math.max(8, x)) + "px";
         menu.style.top = String(Math.max(8, y)) + "px";
 
-        document.body.appendChild(menu);
+        getMenuHost().appendChild(menu);
         panelActionsMenu = menu;
         logAction("tab_actions_menu_open", { panel: kind });
       }
@@ -2022,7 +2192,7 @@
         if (!menu.children.length) return;
         menu.style.left = String(Math.max(8, x)) + "px";
         menu.style.top = String(Math.max(8, y)) + "px";
-        document.body.appendChild(menu);
+        getMenuHost().appendChild(menu);
         rowActionsMenu = menu;
       }
 
@@ -2101,7 +2271,7 @@
         menu.style.left = `${Math.max(8, x)}px`;
         menu.style.top = `${Math.max(8, y)}px`;
 
-        document.body.appendChild(menu);
+        getMenuHost().appendChild(menu);
         holdingContextMenu = menu;
         logAction('holding_copy_menu_open', { holding_id: holding.id, x, y });
       }
@@ -2129,6 +2299,16 @@
           removed_keys: Array.from(new Set((p.removedKeys || []).map((x) => String(x || "").trim()).filter(Boolean))),
           selected_symbols: (p.tickers || []).filter((t) => t.selected).map((t) => t.symbol),
           removed_symbols: [],
+          symbol_overrides: Object.fromEntries(
+            (p.tickers || [])
+              .map((t) => {
+                const id = String(t.id || "").trim();
+                const original = sanitizeTicker(t.originalSymbol || t.symbol);
+                const current = sanitizeTicker(t.symbol);
+                return id && original && current && current !== original ? [id, current] : null;
+              })
+              .filter(Boolean)
+          ),
         }));
       }
 
@@ -2405,6 +2585,176 @@
         logAction("portfolio_ticker_shares_edit", { portfolio_id: pId, holding_id: hId, shares: nextShares });
       }
 
+      function applyImportedTickerRename(portfolioId, holdingId, nextSymbol) {
+        const pId = String(portfolioId || "").trim();
+        const hId = String(holdingId || "").trim();
+        const cleanSymbol = sanitizeTicker(nextSymbol);
+        if (!pId || !hId || !cleanSymbol) return false;
+
+        const allImportedTickers = (importedPortfolios || []).flatMap((p) => p.tickers || []);
+        const portfolio = (importedPortfolios || []).find((p) => String(p.id) === pId);
+        const target = (portfolio?.tickers || []).find((t) => String(t.id || "") === hId)
+          || allImportedTickers.find((t) => String(t.id || "") === hId);
+        if (!target) return false;
+
+        const targetCurrentSymbol = sanitizeTicker(target.symbol || "");
+        const targetOriginalSymbol = sanitizeTicker(target.originalSymbol || target.symbol || "");
+        const shouldRenameTicker = (ticker) => {
+          const current = sanitizeTicker(ticker?.symbol || "");
+          const original = sanitizeTicker(ticker?.originalSymbol || ticker?.symbol || "");
+          return current === targetCurrentSymbol || original === targetOriginalSymbol;
+        };
+
+        let rightChanged = false;
+        importedPortfolios = (importedPortfolios || []).map((p) => {
+          const nextTickers = (p.tickers || []).map((t) => {
+            if (!shouldRenameTicker(t) || sanitizeTicker(t.symbol) === cleanSymbol) return t;
+            rightChanged = true;
+            return { ...t, symbol: cleanSymbol };
+          });
+          return nextTickers === p.tickers ? p : { ...p, tickers: nextTickers };
+        });
+
+        const importedHoldingById = new Map(
+          (importedPortfolios || [])
+            .flatMap((p) => p.tickers || [])
+            .map((t) => [String(t.id || "").trim(), t])
+        );
+
+        let leftChanged = false;
+        leftCategories = (leftCategories || []).map((c) => ({
+          ...c,
+          items: (c.items || []).map((it) => {
+            const srcHid = String(it?.sourceHoldingId || it?.source_holding_id || "").trim();
+            const linkedImported = importedHoldingById.get(srcHid);
+            const selfMatches = shouldRenameTicker(it);
+            const linkedMatches = linkedImported ? shouldRenameTicker(linkedImported) : false;
+            if ((selfMatches || linkedMatches) && sanitizeTicker(it.symbol) !== cleanSymbol) {
+              leftChanged = true;
+              return {
+                ...it,
+                symbol: cleanSymbol,
+                label: cleanSymbol,
+              };
+            }
+            return it;
+          }),
+        }));
+
+        if (!rightChanged && !leftChanged) return false;
+
+        errorEl.textContent = "";
+        setPortfolioDirty('Unsaved holdings changes.');
+        renderImportedPortfolios();
+        renderTickerList();
+        renderLeftTabs();
+        updateSelectedCount();
+        queueLeftCategoriesAutoSave("sync_right_symbol_to_left");
+        loadData();
+        return true;
+      }
+
+      function renameImportedTicker(portfolioId, holdingId) {
+        const pId = String(portfolioId || "").trim();
+        const hId = String(holdingId || "").trim();
+        const portfolio = (importedPortfolios || []).find((p) => String(p.id) === pId);
+        const item = (portfolio?.tickers || []).find((t) => String(t.id || "") === hId);
+        if (!item) return;
+
+        const current = sanitizeTicker(item.symbol || "");
+        const raw = window.prompt("Rename ticker symbol:", current);
+        if (raw === null) return;
+        const nextSymbol = sanitizeTicker(raw);
+        if (!nextSymbol) {
+          errorEl.textContent = "Ticker symbol cannot be blank.";
+          return;
+        }
+        if (nextSymbol === current) return;
+
+        if (applyImportedTickerRename(pId, hId, nextSymbol)) {
+          logAction("portfolio_ticker_rename", {
+            portfolio_id: pId,
+            holding_id: hId,
+            old_symbol: current,
+            new_symbol: nextSymbol,
+            scope: "same_symbol_all_accounts",
+          });
+        }
+      }
+
+      function renameLeftTicker(tabId, holdingId) {
+        const cat = (leftCategories || []).find((c) => String(c.id) === String(tabId));
+        const item = (cat?.items || []).find((it) => String(it.id) === String(holdingId));
+        if (!item) return;
+
+        const currentSymbol = sanitizeTicker(item.symbol || "");
+        const linkedPortfolioId = String(item?.sourcePortfolioId || item?.source_portfolio_id || "").trim();
+        const linkedHoldingId = String(item?.sourceHoldingId || item?.source_holding_id || "").trim();
+        const hasImportedMatch = (importedPortfolios || []).some((p) =>
+          (p.tickers || []).some((t) => {
+            const current = sanitizeTicker(t.symbol || "");
+            const original = sanitizeTicker(t.originalSymbol || t.symbol || "");
+            return current === currentSymbol || original === currentSymbol;
+          })
+        );
+        if ((linkedPortfolioId && linkedHoldingId) || hasImportedMatch) {
+          let targetPortfolio = linkedPortfolioId;
+          let targetHolding = linkedHoldingId;
+          if (!targetPortfolio || !targetHolding) {
+            for (const p of (importedPortfolios || [])) {
+              const matched = (p.tickers || []).find((t) => {
+                const current = sanitizeTicker(t.symbol || "");
+                const original = sanitizeTicker(t.originalSymbol || t.symbol || "");
+                return current === currentSymbol || original === currentSymbol;
+              });
+              if (matched) {
+                targetPortfolio = String(p.id || "");
+                targetHolding = String(matched.id || "");
+                break;
+              }
+            }
+          }
+          if (targetPortfolio && targetHolding) {
+            renameImportedTicker(targetPortfolio, targetHolding);
+            return;
+          }
+        }
+
+        const current = currentSymbol;
+        const raw = window.prompt("Rename ticker symbol:", current);
+        if (raw === null) return;
+        const nextSymbol = sanitizeTicker(raw);
+        if (!nextSymbol) {
+          errorEl.textContent = "Ticker symbol cannot be blank.";
+          return;
+        }
+        if (nextSymbol === current) return;
+
+        leftCategories = (leftCategories || []).map((c) => {
+          if (String(c.id) !== String(tabId)) return c;
+          return {
+            ...c,
+            items: (c.items || []).map((it) => String(it.id) === String(holdingId)
+              ? { ...it, symbol: nextSymbol, label: nextSymbol }
+              : it),
+          };
+        });
+
+        if (String(tabId) === "default" && (item.source || "") === "manual") {
+          tickers = (tickers || []).map((t) => t.symbol === current ? { ...t, symbol: nextSymbol } : t);
+          saveTickers();
+          syncDefaultCategoryFromTickers();
+        }
+
+        errorEl.textContent = "";
+        renderTickerList();
+        renderLeftTabs();
+        updateSelectedCount();
+        queueLeftCategoriesAutoSave("rename_left_ticker");
+        loadData();
+        logAction("left_ticker_rename", { tab_id: tabId, holding_id: holdingId, old_symbol: current, new_symbol: nextSymbol });
+      }
+
       function deleteImportedPortfolio(portfolioId) {
         const removedPortfolio = importedPortfolios.find((p) => p.id === portfolioId) || null;
         const next = importedPortfolios.filter((p) => p.id !== portfolioId);
@@ -2443,16 +2793,6 @@
         addTab.textContent = '+';
         addTab.addEventListener('click', triggerPortfolioImportPicker);
         strip.appendChild(addTab);
-
-        const menuTab = document.createElement('button');
-        menuTab.type = 'button';
-        menuTab.className = 'chrome-tab menu-tab';
-        menuTab.innerHTML = '&#8942;';
-        menuTab.addEventListener('click', (ev) => {
-          ev.stopPropagation();
-          openPanelActionsMenu("right", ev.clientX, ev.clientY);
-        });
-        strip.appendChild(menuTab);
 
         tabWrap.appendChild(strip);
         importedPortfolioList.appendChild(tabWrap);
@@ -2518,6 +2858,7 @@
         activePortfolio.tickers.forEach((t) => {
           const row = document.createElement("div");
           row.className = "ticker-item";
+          row.addEventListener("click", (ev) => handleTickerRowClickForNews(ev, t.symbol));
 
           const top = document.createElement("div");
           top.className = "ticker-row";
@@ -2528,6 +2869,7 @@
           const checkbox = document.createElement("input");
           checkbox.type = "checkbox";
           checkbox.checked = !!t.selected;
+          checkbox.addEventListener("click", (e) => e.stopPropagation());
           checkbox.addEventListener("change", (e) => toggleImportedTicker(activePortfolio.id, t.id, e.target.checked));
 
           const text = document.createElement("span");
@@ -2543,6 +2885,10 @@
           actionsBtn.addEventListener("click", (ev) => {
             ev.stopPropagation();
             openRowActionsMenu(ev.clientX, ev.clientY, [
+              {
+                label: "Rename ticker",
+                onClick: () => renameImportedTicker(activePortfolio.id, t.id),
+              },
               {
                 label: "Edit shares",
                 onClick: () => editImportedTickerShares(activePortfolio.id, t.id),
@@ -2605,6 +2951,7 @@
         logAction("portfolio_ticker_toggle", { portfolio_id: portfolioId, holding_id: String(holdingId || ""), checked: !!checked });
         updateSelectedCount();
         renderImportedPortfolios();
+        syncNewsPopupToSelection(checked ? "imported_checked" : "imported_unchecked");
         loadData();
       }
 
@@ -2727,6 +3074,7 @@
         renderLeftTabs();
         renderTickerList();
         queueLeftCategoriesAutoSave("toggle_saved_ticker");
+        syncNewsPopupToSelection(checked ? "saved_checked" : "saved_unchecked");
         loadData();
       }
 
@@ -2749,6 +3097,7 @@
         updateSelectedCount();
         queueLeftCategoriesAutoSave("clear_all_selections");
         logAction("clear_all_selections", {});
+        syncNewsPopupToSelection("clear_all");
         loadData();
       }
       function editLeftTickerShares(tabId, holdingId) {
@@ -2815,6 +3164,7 @@
         sortedItems.forEach((t, idx) => {
           const row = document.createElement("div");
           row.className = "ticker-item";
+          row.addEventListener("click", (ev) => handleTickerRowClickForNews(ev, t.symbol));
 
           const top = document.createElement("div");
           top.className = "ticker-row";
@@ -2825,6 +3175,7 @@
           const checkbox = document.createElement("input");
           checkbox.type = "checkbox";
           checkbox.checked = !!t.selected;
+          checkbox.addEventListener("click", (e) => e.stopPropagation());
           checkbox.addEventListener("change", (e) => {
             const checked = !!e.target.checked;
             if (checked && getSelectedSymbols().length >= MAX_SELECTED) {
@@ -2843,6 +3194,7 @@
             }
             logAction("left_ticker_toggle", { tab_id: active.id, holding_id: t.id, checked });
             renderTickerList();
+            syncNewsPopupToSelection(checked ? "left_checked" : "left_unchecked");
             queueLeftCategoriesAutoSave("toggle_left_ticker");
             loadData();
           });
@@ -2860,6 +3212,10 @@
           actionsBtn.addEventListener("click", (ev) => {
             ev.stopPropagation();
             const rowActions = [
+              {
+                label: "Rename ticker",
+                onClick: () => renameLeftTicker(active.id, t.id),
+              },
               {
                 label: "Edit shares",
                 onClick: () => editLeftTickerShares(active.id, t.id),
@@ -3104,6 +3460,115 @@
         const dt = luxon.DateTime.fromISO(String(iso || ""), { zone: "utc" }).toLocal();
         if (!dt.isValid) return "";
         return dt.toFormat(fmt);
+      }
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/\"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function clampFloatingDialogToViewport(el) {
+        if (!el || el.hasAttribute("hidden")) return;
+        const rect = el.getBoundingClientRect();
+        const maxLeft = Math.max(8, window.innerWidth - el.offsetWidth - 8);
+        const maxTop = Math.max(8, window.innerHeight - el.offsetHeight - 8);
+        const left = Math.min(maxLeft, Math.max(8, rect.left));
+        const top = Math.min(maxTop, Math.max(8, rect.top));
+        el.style.left = `${Math.round(left)}px`;
+        el.style.top = `${Math.round(top)}px`;
+        el.style.right = "auto";
+        el.style.transform = "none";
+      }
+
+      function renderNewsDialog(ticker, items, errorMessage = "") {
+        if (!newsDialogTitle || !newsDialogBody) return;
+        newsDialogTitle.textContent = ticker ? `${ticker} News` : "Ticker News";
+        if (errorMessage) {
+          newsDialogBody.innerHTML = `<div class="meta">${escapeHtml(errorMessage)}</div>`;
+          return;
+        }
+        if (!Array.isArray(items) || !items.length) {
+          newsDialogBody.innerHTML = `<div class="meta">No recent news returned for ${escapeHtml(ticker)}.</div>`;
+          return;
+        }
+        newsDialogBody.innerHTML = `
+          <div class="news-list">
+            ${items.map((item) => `
+              <div class="news-item">
+                <a class="news-item-headline" href="${escapeHtml(item.url || "#")}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.headline || "Untitled")}</a>
+                <div class="news-item-meta">${escapeHtml(item.source || "Unknown source")}${item.published_at ? ` | ${escapeHtml(formatLocalFromIso(item.published_at, "MMM d h:mm a"))}` : ""}</div>
+                ${item.summary ? `<div class="news-item-summary">${escapeHtml(item.summary)}</div>` : ""}
+              </div>
+            `).join("")}
+          </div>
+        `;
+      }
+
+      async function openTickerNews(symbol) {
+        const ticker = sanitizeTicker(symbol);
+        if (!ticker || !newsDialog || !newsDialogBody || !newsDialogTitle) {
+          logAction("ticker_news_request_skipped", {
+            ticker,
+            has_dialog: !!newsDialog,
+            has_body: !!newsDialogBody,
+            has_title: !!newsDialogTitle,
+          });
+          return;
+        }
+        logAction("ticker_news_request", { ticker });
+        setActiveNewsTicker(ticker);
+        newsDialogTitle.textContent = `${ticker} News`;
+        newsDialogBody.innerHTML = `<div class="meta">Loading recent news for ${escapeHtml(ticker)}...</div>`;
+        newsDialog.removeAttribute("hidden");
+        if (!newsDialog.style.left && !newsDialog.style.top) {
+          newsDialog.style.left = `${Math.max(24, Math.round((window.innerWidth - Math.min(720, window.innerWidth - 40)) / 2))}px`;
+          newsDialog.style.top = "96px";
+          newsDialog.style.transform = "none";
+        }
+        clampFloatingDialogToViewport(newsDialog);
+        logAction("ticker_news_dialog_open", {
+          ticker,
+          hidden: newsDialog.hasAttribute("hidden"),
+          left: newsDialog.style.left || "",
+          top: newsDialog.style.top || "",
+          width: newsDialog.offsetWidth || 0,
+          height: newsDialog.offsetHeight || 0,
+        });
+        try {
+          const res = await fetch(`/api/news?ticker=${encodeURIComponent(ticker)}`);
+          const payload = await res.json();
+          logAction("ticker_news_response", {
+            ticker,
+            ok: !!res.ok,
+            status: res.status,
+            item_count: Array.isArray(payload?.items) ? payload.items.length : 0,
+            error: payload?.error || "",
+          });
+          if (!res.ok) throw new Error(payload.error || "News request failed.");
+          if (sanitizeTicker(activeNewsTicker) !== ticker) return;
+          renderNewsDialog(ticker, payload.items || []);
+          logAction("ticker_news_open", { ticker, count: Array.isArray(payload.items) ? payload.items.length : 0 });
+        } catch (err) {
+          if (sanitizeTicker(activeNewsTicker) !== ticker) return;
+          renderNewsDialog(ticker, [], err?.message || "News request failed.");
+          logAction("ticker_news_failed", { ticker, error: err?.message || String(err) });
+        }
+      }
+
+      function closeNewsDialogIfTickerUnselected(ticker) {
+        const symbol = sanitizeTicker(ticker);
+        if (!symbol || !newsDialog || newsDialog.hasAttribute("hidden")) return;
+        if (sanitizeTicker(activeNewsTicker) !== symbol) return;
+        const stillSelected = getSelectedSymbols().includes(symbol);
+        if (stillSelected) return;
+        newsDialog.setAttribute("hidden", "");
+        newsDragActive = false;
+        setActiveNewsTicker("");
+        logAction("ticker_news_auto_closed", { ticker: symbol, reason: "unselected" });
       }
 
       function getEtSessionLabel(dtEt) {
@@ -5153,8 +5618,19 @@
           ev.stopPropagation();
           openRowActionsMenu(ev.clientX, ev.clientY, [
             {
+              label: "Save Holdings Layout",
+              onClick: () => {
+                logAction("center_menu_save_holdings_click", { portfolio_count: importedPortfolios.length });
+                saveImportedPortfoliosToServer();
+              },
+            },
+            {
               label: `Auto refresh (5m): ${autoRefreshEnabled ? "On" : "Off"}`,
               onClick: () => setAutoRefreshEnabled(!autoRefreshEnabled),
+            },
+            {
+              label: `News popup: ${newsPopupEnabled ? "On" : "Off"}`,
+              onClick: () => setNewsPopupEnabled(!newsPopupEnabled),
             },
             {
               label: "ClearAll",
@@ -5332,11 +5808,67 @@
         });
       }
 
+      if (newsDialog && newsDialogHeader) {
+        if (newsDialogCloseBtn) {
+          newsDialogCloseBtn.addEventListener("click", () => {
+            newsDialog.setAttribute("hidden", "");
+            newsDragActive = false;
+            activeNewsTicker = "";
+            logAction("ticker_news_dialog_closed", { reason: "close_button" });
+          });
+        }
+
+        newsDialogHeader.addEventListener("mousedown", (e) => {
+          if (e.button !== 0) return;
+          if (newsDialogCloseBtn && newsDialogCloseBtn.contains(e.target)) return;
+          const rect = newsDialog.getBoundingClientRect();
+          newsDragActive = true;
+          newsDragOffsetX = e.clientX - rect.left;
+          newsDragOffsetY = e.clientY - rect.top;
+          newsDialog.style.left = `${Math.round(rect.left)}px`;
+          newsDialog.style.top = `${Math.round(rect.top)}px`;
+          newsDialog.style.right = "auto";
+          newsDialog.style.transform = "none";
+          e.preventDefault();
+        });
+
+        document.addEventListener("mousemove", (e) => {
+          if (!newsDragActive) return;
+          const maxLeft = Math.max(8, window.innerWidth - newsDialog.offsetWidth - 8);
+          const maxTop = Math.max(8, window.innerHeight - newsDialog.offsetHeight - 8);
+          const left = Math.min(maxLeft, Math.max(8, e.clientX - newsDragOffsetX));
+          const top = Math.min(maxTop, Math.max(8, e.clientY - newsDragOffsetY));
+          newsDialog.style.left = `${Math.round(left)}px`;
+          newsDialog.style.top = `${Math.round(top)}px`;
+          newsDialog.style.right = "auto";
+          newsDialog.style.transform = "none";
+        });
+
+        document.addEventListener("mouseup", () => {
+          if (!newsDragActive) return;
+          newsDragActive = false;
+          logAction("ticker_news_dialog_drag_end", {
+            left: newsDialog.style.left || "",
+            top: newsDialog.style.top || "",
+          });
+        });
+
+        window.addEventListener("resize", () => {
+          clampFloatingDialogToViewport(newsDialog);
+        });
+      }
+
       document.addEventListener("keydown", (e) => {
         if (e.key !== "Escape") return;
         if (rulesHintPopover && !rulesHintPopover.hasAttribute("hidden")) {
           rulesHintPopover.setAttribute("hidden", "");
           hintDragActive = false;
+        }
+        if (newsDialog && !newsDialog.hasAttribute("hidden")) {
+          newsDialog.setAttribute("hidden", "");
+          newsDragActive = false;
+          activeNewsTicker = "";
+          logAction("ticker_news_dialog_closed", { reason: "escape" });
         }
       });
 
@@ -5402,6 +5934,7 @@
         renderTickerList();
         renderImportedPortfolios();
         updateSelectedCount();
+        syncNewsPopupToSelection("app_init");
         await loadData();
         logAction("app_init_done", {
           saved_tickers: tickers.length,
