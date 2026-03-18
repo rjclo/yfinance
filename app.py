@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import os
+import pickle
 import re
 import sqlite3
 import threading
@@ -25,6 +26,29 @@ from flask import Flask, g, jsonify, render_template, request
 from fetch_market_data import diagnose_source_failure, fetch_price_history_by_source
 
 app = Flask(__name__)
+
+
+def _deserialize_cached_df(blob: bytes) -> pd.DataFrame | None:
+    if not blob:
+        return None
+    try:
+        return pd.read_parquet(io.BytesIO(blob))
+    except Exception:
+        pass
+    try:
+        obj = pickle.loads(blob)
+        return obj if isinstance(obj, pd.DataFrame) else None
+    except Exception:
+        return None
+
+
+def _serialize_cached_df(df: pd.DataFrame) -> bytes:
+    buf = io.BytesIO()
+    try:
+        df.to_parquet(buf, index=True, compression="snappy")
+        return buf.getvalue()
+    except Exception:
+        return pickle.dumps(df, protocol=pickle.HIGHEST_PROTOCOL)
 
 # Map UI ranges to yfinance period/interval values.
 RANGE_MAP: Dict[str, Tuple[str, str]] = {
@@ -121,11 +145,10 @@ class _DiskCache:
         blob, fetched_at = row
         if (time.time() - fetched_at) > max_age_sec:
             return None, fetched_at
-        try:
-            df = pd.read_parquet(io.BytesIO(blob))
-            return df, fetched_at
-        except Exception:
+        df = _deserialize_cached_df(blob)
+        if df is None:
             return None, 0.0
+        return df, fetched_at
 
     def get_stale(self, ticker: str, period: str, interval: str, prepost: bool, max_stale_sec: float = 86400) -> pd.DataFrame | None:
         """Return DataFrame even if stale, up to max_stale_sec old. For fallback on API failure."""
@@ -143,16 +166,11 @@ class _DiskCache:
         blob, fetched_at = row
         if (time.time() - fetched_at) > max_stale_sec:
             return None
-        try:
-            return pd.read_parquet(io.BytesIO(blob))
-        except Exception:
-            return None
+        return _deserialize_cached_df(blob)
 
     def put(self, ticker: str, period: str, interval: str, prepost: bool, df: pd.DataFrame):
         """Write DataFrame to cache. Triggers eviction if over size limit."""
-        buf = io.BytesIO()
-        df.to_parquet(buf, index=True, compression="snappy")
-        blob = buf.getvalue()
+        blob = _serialize_cached_df(df)
         with self._lock:
             try:
                 with self._connect() as conn:

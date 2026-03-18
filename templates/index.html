@@ -889,6 +889,7 @@
         font-size: 16px;
         line-height: 1;
         z-index: 8;
+        pointer-events: auto;
       }
 
       .chart-sensitivity {
@@ -904,6 +905,13 @@
         border: 1px solid var(--border);
         border-radius: 8px;
         background: rgba(255, 255, 255, 0.92);
+        pointer-events: none;
+      }
+
+      .chart-sensitivity label,
+      .chart-sensitivity input,
+      .chart-sensitivity span {
+        pointer-events: auto;
       }
 
       .chart-sensitivity label {
@@ -993,6 +1001,7 @@
         flex-direction: column;
         gap: 6px;
         z-index: 8;
+        pointer-events: none;
       }
 
       .chart-zoom-btn {
@@ -1008,6 +1017,7 @@
         align-items: center;
         justify-content: center;
         padding: 0;
+        pointer-events: auto;
       }
 
       .rsi-chart-wrap {
@@ -3673,6 +3683,8 @@
       }
 
       let priceTooltipEl = null;
+      let patternDetailEl = null;
+      let patternDetailPinned = false;
       let hoverSyncTs = null;
 
       const hoverSyncLinePlugin = {
@@ -3790,22 +3802,104 @@
       }
 
       function getPriceTooltipEl() {
-        if (priceTooltipEl) return priceTooltipEl;
+        const host = getMenuHost();
+        if (priceTooltipEl) {
+          if (priceTooltipEl.parentNode !== host) {
+            host.appendChild(priceTooltipEl);
+          }
+          return priceTooltipEl;
+        }
         const el = document.createElement("div");
-        el.style.position = "absolute";
+        el.style.position = "fixed";
         el.style.pointerEvents = "none";
+        el.style.right = "20px";
+        el.style.top = "96px";
+        el.style.width = "340px";
+        el.style.maxWidth = "calc(100vw - 32px)";
+        el.style.maxHeight = "calc(100vh - 120px)";
+        el.style.overflowY = "auto";
         el.style.background = "rgba(17, 24, 39, 0.92)";
         el.style.color = "#fff";
-        el.style.borderRadius = "10px";
-        el.style.padding = "10px 12px";
-        el.style.fontSize = "12px";
-        el.style.lineHeight = "1.35";
-        el.style.whiteSpace = "nowrap";
+        el.style.borderRadius = "12px";
+        el.style.padding = "14px 16px";
+        el.style.fontSize = "13px";
+        el.style.lineHeight = "1.45";
+        el.style.whiteSpace = "normal";
+        el.style.boxShadow = "0 10px 24px rgba(15, 23, 42, 0.28)";
         el.style.zIndex = "1400";
         el.style.opacity = "0";
-        document.body.appendChild(el);
+        host.appendChild(el);
         priceTooltipEl = el;
         return el;
+      }
+
+      function getPatternDetailEl() {
+        const host = getMenuHost();
+        if (patternDetailEl) {
+          if (patternDetailEl.parentNode !== host) {
+            host.appendChild(patternDetailEl);
+          }
+          return patternDetailEl;
+        }
+        const el = document.createElement("div");
+        el.style.position = "fixed";
+        el.style.right = "20px";
+        el.style.top = "96px";
+        el.style.width = "340px";
+        el.style.maxWidth = "calc(100vw - 32px)";
+        el.style.maxHeight = "calc(100vh - 120px)";
+        el.style.overflowY = "auto";
+        el.style.background = "rgba(17, 24, 39, 0.96)";
+        el.style.color = "#fff";
+        el.style.borderRadius = "12px";
+        el.style.padding = "14px 16px";
+        el.style.boxShadow = "0 16px 36px rgba(15, 23, 42, 0.32)";
+        el.style.zIndex = "1500";
+        el.style.display = "none";
+        el.style.pointerEvents = "auto";
+        el.innerHTML = `
+          <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:8px;">
+            <div style="font-weight:700; font-size:14px;">Candlestick Pattern</div>
+            <button type="button" data-pattern-close="1" aria-label="Close pattern details" style="border:0; background:transparent; color:#cbd5e1; font-size:18px; line-height:1; cursor:pointer;">&times;</button>
+          </div>
+          <div data-pattern-body="1" style="font-size:13px; line-height:1.45;"></div>
+        `;
+        el.querySelector("[data-pattern-close='1']")?.addEventListener("click", (evt) => {
+          evt.preventDefault();
+          evt.stopPropagation();
+          hidePatternDetail();
+        });
+        host.appendChild(el);
+        patternDetailEl = el;
+        return el;
+      }
+
+      function hidePatternDetail() {
+        if (!patternDetailEl) return;
+        patternDetailPinned = false;
+        patternDetailEl.style.display = "none";
+      }
+
+      function showPatternDetail(raw, opts = {}) {
+        if (!raw) return;
+        patternDetailPinned = !!opts.pinned;
+        const el = getPatternDetailEl();
+        const body = el.querySelector("[data-pattern-body='1']");
+        if (!body) return;
+        const dt = raw.x ? new Date(raw.x) : null;
+        const biasColor = raw.patternBias === "bullish" ? "#22c55e" : raw.patternBias === "bearish" ? "#ef4444" : "#f59e0b";
+        body.innerHTML = [
+          `<div><strong>Date:</strong> ${dt ? dt.toLocaleString() : "N/A"}</div>`,
+          `<div style="margin-top:4px;"><strong>Ticker:</strong> ${raw.ticker || "N/A"}</div>`,
+          `<div style="margin-top:10px; font-weight:700; color:${biasColor};">${raw.patternName || "Pattern"}</div>`,
+          `<div style="margin-top:6px;">${raw.patternMeaning || "Candlestick pattern detected."}</div>`,
+          `<div style="margin-top:10px;"><strong>Open:</strong> ${raw.open == null ? "N/A" : formatNumber(raw.open)}</div>`,
+          `<div><strong>Close:</strong> ${raw.close == null ? "N/A" : formatNumber(raw.close)}</div>`,
+          `<div><strong>High:</strong> ${raw.high == null ? "N/A" : formatNumber(raw.high)}</div>`,
+          `<div><strong>Low:</strong> ${raw.low == null ? "N/A" : formatNumber(raw.low)}</div>`,
+          `<div><strong>Volume:</strong> ${raw.volume == null ? "N/A" : formatNumber(raw.volume)}</div>`,
+        ].join("");
+        el.style.display = "block";
       }
 
       function renderPriceTooltip(context) {
@@ -3813,7 +3907,16 @@
         const el = getPriceTooltipEl();
         if (!tooltip || tooltip.opacity === 0 || !tooltip.dataPoints || tooltip.dataPoints.length === 0) {
           el.style.opacity = "0";
+          if (!patternDetailPinned) hidePatternDetail();
           hoverSyncTs = null;
+          return;
+        }
+
+        const patternPt = tooltip.dataPoints.find((dp) => dp?.dataset?.isPatternMarker) || null;
+        if (patternPt) {
+          el.style.opacity = "0";
+          if (!patternDetailPinned) showPatternDetail(patternPt.raw || {}, { pinned: false });
+          hoverSyncTs = patternPt.raw?.x ? new Date(patternPt.raw.x).getTime() : null;
           return;
         }
 
@@ -3822,7 +3925,7 @@
         const dt = raw.x ? new Date(raw.x) : null;
         hoverSyncTs = dt ? dt.getTime() : null;
         const dateTxt = dt ? dt.toLocaleString() : "N/A";
-        const ticker = String(pt.dataset?.label || "");
+        const ticker = String(raw.ticker || pt.dataset?.label || "");
         const openVal = raw.open;
         const closeVal = raw.close;
         const highVal = raw.high;
@@ -3830,37 +3933,16 @@
         const volumeVal = raw.volume;
 
         el.innerHTML = [
-          `<div><strong>Date: ${dateTxt}</strong></div>`,
-          `<div style="margin-top:4px;"><strong>${ticker}</strong></div>`,
-          `<div>Open: ${openVal == null ? "N/A" : formatNumber(openVal)}</div>`,
-          `<div>Close: ${closeVal == null ? "N/A" : formatNumber(closeVal)}</div>`,
-          `<div>High: ${highVal == null ? "N/A" : formatNumber(highVal)}</div>`,
-          `<div>Low: ${lowVal == null ? "N/A" : formatNumber(lowVal)}</div>`,
-          `<div>Volume: ${volumeVal == null ? "N/A" : formatNumber(volumeVal)}</div>`,
+          `<div style="font-weight:700; font-size:14px; margin-bottom:8px;">Price Details</div>`,
+          `<div><strong>Date:</strong> ${dateTxt}</div>`,
+          `<div style="margin-top:4px;"><strong>Ticker:</strong> ${ticker}</div>`,
+          `<div style="margin-top:10px;"><strong>Open:</strong> ${openVal == null ? "N/A" : formatNumber(openVal)}</div>`,
+          `<div><strong>Close:</strong> ${closeVal == null ? "N/A" : formatNumber(closeVal)}</div>`,
+          `<div><strong>High:</strong> ${highVal == null ? "N/A" : formatNumber(highVal)}</div>`,
+          `<div><strong>Low:</strong> ${lowVal == null ? "N/A" : formatNumber(lowVal)}</div>`,
+          `<div><strong>Volume:</strong> ${volumeVal == null ? "N/A" : formatNumber(volumeVal)}</div>`,
         ].join("");
-
-        const x = pt.element?.x ?? tooltip.caretX ?? 0;
-        const y = pt.element?.y ?? tooltip.caretY ?? 0;
-        const rect = chart.canvas.getBoundingClientRect();
-        const docX = window.pageXOffset + rect.left;
-        const docY = window.pageYOffset + rect.top;
-        const pad = 16;
-        const minLeft = window.pageXOffset + 8;
-        const maxLeft = window.pageXOffset + window.innerWidth - el.offsetWidth - 8;
-
-        let left = docX + x - el.offsetWidth - pad;
-        if (left < minLeft) {
-          left = docX + x + pad;
-        }
-        left = Math.max(minLeft, Math.min(maxLeft, left));
-
-        const minTop = window.pageYOffset + 8;
-        const maxTop = window.pageYOffset + window.innerHeight - el.offsetHeight - 8;
-        let top = docY + y - (el.offsetHeight / 2);
-        top = Math.max(minTop, Math.min(maxTop, top));
-
-        el.style.left = `${left}px`;
-        el.style.top = `${top}px`;
+        if (!patternDetailPinned) hidePatternDetail();
         el.style.opacity = "1";
       }
 
@@ -4632,6 +4714,149 @@
         };
       }
 
+      const CANDLE_PATTERN_INFO = {
+        hammer: { name: "Hammer", bias: "bullish", meaning: "A long lower shadow after a decline. It suggests sellers lost control and a bullish reversal may be starting." },
+        hanging_man: { name: "Hanging Man", bias: "bearish", meaning: "A hammer-like candle after an uptrend. It warns that buyers may be losing control and downside risk is rising." },
+        inverted_hammer: { name: "Inverted Hammer", bias: "bullish", meaning: "A long upper shadow after a decline. It signals buyers pushed back and a reversal may be forming if confirmed." },
+        shooting_star: { name: "Shooting Star", bias: "bearish", meaning: "A long upper shadow after an uptrend. It shows rejection of higher prices and warns of a bearish turn." },
+        bullish_engulfing: { name: "Bullish Engulfing", bias: "bullish", meaning: "A bullish candle fully engulfs the prior bearish body. It often marks a bullish reversal." },
+        bearish_engulfing: { name: "Bearish Engulfing", bias: "bearish", meaning: "A bearish candle fully engulfs the prior bullish body. It often marks a bearish reversal." },
+        bullish_harami: { name: "Bullish Harami", bias: "bullish", meaning: "A small bullish body forms inside the prior bearish body. It can signal downside momentum is fading." },
+        bearish_harami: { name: "Bearish Harami", bias: "bearish", meaning: "A small bearish body forms inside the prior bullish body. It can signal upside momentum is fading." },
+        piercing_line: { name: "Piercing Line", bias: "bullish", meaning: "A bullish recovery candle retraces deep into the prior bearish body. It suggests buyers are regaining control." },
+        dark_cloud_cover: { name: "Dark Cloud Cover", bias: "bearish", meaning: "A bearish candle closes deep into the prior bullish body. It suggests sellers are taking control." },
+        morning_star: { name: "Morning Star", bias: "bullish", meaning: "A three-candle bullish reversal: selloff, hesitation, then a strong bullish recovery." },
+        evening_star: { name: "Evening Star", bias: "bearish", meaning: "A three-candle bearish reversal: rally, hesitation, then a strong bearish reversal." },
+        three_white_soldiers: { name: "Three White Soldiers", bias: "bullish", meaning: "Three strong bullish candles in sequence. It signals sustained buying pressure." },
+        three_black_crows: { name: "Three Black Crows", bias: "bearish", meaning: "Three strong bearish candles in sequence. It signals sustained selling pressure." },
+        tweezer_bottom: { name: "Tweezer Bottom", bias: "bullish", meaning: "Two candles reject the same low area. It suggests support is holding." },
+        tweezer_top: { name: "Tweezer Top", bias: "bearish", meaning: "Two candles reject the same high area. It suggests resistance is holding." },
+        bullish_marubozu: { name: "Bullish Marubozu", bias: "bullish", meaning: "A strong bullish candle with little wick. It shows buyers controlled the whole session." },
+        bearish_marubozu: { name: "Bearish Marubozu", bias: "bearish", meaning: "A strong bearish candle with little wick. It shows sellers controlled the whole session." },
+        dragonfly_doji: { name: "Dragonfly Doji", bias: "bullish", meaning: "A doji with a long lower shadow. It often signals rejection of lower prices." },
+        gravestone_doji: { name: "Gravestone Doji", bias: "bearish", meaning: "A doji with a long upper shadow. It often signals rejection of higher prices." },
+      };
+
+      function getCandleStats(pt) {
+        const open = Number(pt?.open);
+        const high = Number(pt?.high);
+        const low = Number(pt?.low);
+        const close = Number(pt?.close);
+        if (![open, high, low, close].every(Number.isFinite)) return null;
+        const range = Math.max(high - low, 1e-9);
+        const body = Math.abs(close - open);
+        const upper = high - Math.max(open, close);
+        const lower = Math.min(open, close) - low;
+        const bullish = close > open;
+        const bearish = close < open;
+        const bodyPct = body / range;
+        return { open, high, low, close, range, body, upper, lower, bullish, bearish, bodyPct };
+      }
+
+      function hasPriorTrend(points, idx, dir, lookback = 4) {
+        const start = Math.max(0, idx - lookback);
+        if (idx - start < 2) return false;
+        const first = Number(points[start]?.close);
+        const last = Number(points[idx - 1]?.close);
+        if (!Number.isFinite(first) || !Number.isFinite(last) || first === 0) return false;
+        const pct = ((last / first) - 1) * 100;
+        return dir === "up" ? pct > 0.35 : pct < -0.35;
+      }
+
+      function nearlyEqual(a, b, tolerance) {
+        return Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= tolerance;
+      }
+
+      function detectCandlestickPatterns(points) {
+        const src = Array.isArray(points) ? points : [];
+        if (src.length < 2) return [];
+        const out = [];
+
+        function push(idx, key, priority = 1) {
+          if (!CANDLE_PATTERN_INFO[key] || !src[idx]) return;
+          out.push({ idx, key, priority });
+        }
+
+        for (let i = 0; i < src.length; i += 1) {
+          const c0 = getCandleStats(src[i]);
+          if (!c0) continue;
+          const p1 = i > 0 ? getCandleStats(src[i - 1]) : null;
+          const p2 = i > 1 ? getCandleStats(src[i - 2]) : null;
+          const doji = c0.bodyPct <= 0.1;
+          const smallBody = c0.bodyPct <= 0.25;
+          const longLower = c0.lower >= (c0.body * 2.2) && c0.lower >= (c0.range * 0.45);
+          const longUpper = c0.upper >= (c0.body * 2.2) && c0.upper >= (c0.range * 0.45);
+          const tinyUpper = c0.upper <= (c0.range * 0.12);
+          const tinyLower = c0.lower <= (c0.range * 0.12);
+          const marubozuUpper = c0.upper <= (c0.range * 0.08);
+          const marubozuLower = c0.lower <= (c0.range * 0.08);
+
+          if (doji && longLower && tinyUpper) push(i, "dragonfly_doji", 2);
+          if (doji && longUpper && tinyLower) push(i, "gravestone_doji", 2);
+          if (!doji && longLower && tinyUpper && smallBody && hasPriorTrend(src, i, "down")) push(i, "hammer", 3);
+          if (!doji && longLower && tinyUpper && smallBody && hasPriorTrend(src, i, "up")) push(i, "hanging_man", 3);
+          if (!doji && longUpper && tinyLower && smallBody && hasPriorTrend(src, i, "down")) push(i, "inverted_hammer", 3);
+          if (!doji && longUpper && tinyLower && smallBody && hasPriorTrend(src, i, "up")) push(i, "shooting_star", 3);
+          if (c0.bullish && c0.bodyPct >= 0.75 && marubozuUpper && marubozuLower) push(i, "bullish_marubozu", 1);
+          if (c0.bearish && c0.bodyPct >= 0.75 && marubozuUpper && marubozuLower) push(i, "bearish_marubozu", 1);
+
+          if (p1) {
+            const tol = Math.max(c0.range, p1.range) * 0.08;
+            const prevMid = (p1.open + p1.close) / 2;
+            if (p1.bearish && c0.bullish && c0.open <= p1.close && c0.close >= p1.open) push(i, "bullish_engulfing", 4);
+            if (p1.bullish && c0.bearish && c0.open >= p1.close && c0.close <= p1.open) push(i, "bearish_engulfing", 4);
+            if (p1.bearish && c0.bullish && c0.body < p1.body && Math.min(c0.open, c0.close) >= Math.min(p1.open, p1.close) && Math.max(c0.open, c0.close) <= Math.max(p1.open, p1.close)) push(i, "bullish_harami", 2);
+            if (p1.bullish && c0.bearish && c0.body < p1.body && Math.min(c0.open, c0.close) >= Math.min(p1.open, p1.close) && Math.max(c0.open, c0.close) <= Math.max(p1.open, p1.close)) push(i, "bearish_harami", 2);
+            if (p1.bearish && c0.bullish && c0.close > prevMid && c0.close < p1.open) push(i, "piercing_line", 3);
+            if (p1.bullish && c0.bearish && c0.close < prevMid && c0.close > p1.open) push(i, "dark_cloud_cover", 3);
+            if (nearlyEqual(c0.low, p1.low, tol) && hasPriorTrend(src, i, "down")) push(i, "tweezer_bottom", 2);
+            if (nearlyEqual(c0.high, p1.high, tol) && hasPriorTrend(src, i, "up")) push(i, "tweezer_top", 2);
+          }
+
+          if (p1 && p2) {
+            const p1Small = p1.bodyPct <= 0.3;
+            const p2Mid = (p2.open + p2.close) / 2;
+            if (hasPriorTrend(src, i - 1, "down") && p2.bearish && p1Small && c0.bullish && c0.close > p2Mid) push(i, "morning_star", 5);
+            if (hasPriorTrend(src, i - 1, "up") && p2.bullish && p1Small && c0.bearish && c0.close < p2Mid) push(i, "evening_star", 5);
+            if (p2.bullish && p1.bullish && c0.bullish && p2.bodyPct > 0.45 && p1.bodyPct > 0.45 && c0.bodyPct > 0.45
+              && p1.close > p2.close && c0.close > p1.close && p1.open >= p2.open && c0.open >= p1.open) push(i, "three_white_soldiers", 4);
+            if (p2.bearish && p1.bearish && c0.bearish && p2.bodyPct > 0.45 && p1.bodyPct > 0.45 && c0.bodyPct > 0.45
+              && p1.close < p2.close && c0.close < p1.close && p1.open <= p2.open && c0.open <= p1.open) push(i, "three_black_crows", 4);
+          }
+        }
+
+        const bestByIdx = new Map();
+        out.forEach((item) => {
+          const existing = bestByIdx.get(item.idx);
+          if (!existing || item.priority > existing.priority) bestByIdx.set(item.idx, item);
+        });
+
+        return Array.from(bestByIdx.values())
+          .map((item) => {
+            const pt = src[item.idx];
+            const info = CANDLE_PATTERN_INFO[item.key];
+            const stats = getCandleStats(pt);
+            if (!pt || !info || !stats) return null;
+            const markerY = info.bias === "bearish"
+              ? (stats.high + (stats.range * 0.12))
+              : (stats.low - (stats.range * 0.12));
+            return {
+              x: pt.t,
+              y: markerY,
+              open: pt.open,
+              high: pt.high,
+              low: pt.low,
+              close: pt.close,
+              volume: pt.volume,
+              patternKey: item.key,
+              patternName: info.name,
+              patternBias: info.bias,
+              patternMeaning: info.meaning,
+            };
+          })
+          .filter(Boolean);
+      }
+
       function getTrendStateLabel(state) {
         const s = String(state || "neutral");
         if (s === "bullish") return "Bullish";
@@ -4931,6 +5156,7 @@
       function drawChart(payloads, opts = {}) {
         const ctx = document.getElementById("priceChart").getContext("2d");
         resolvedScaleMode = chartTypeMode === "candles" ? "price" : pickResolvedScaleMode(payloads);
+        if (chartTypeMode !== "candles") hidePatternDetail();
         const preserveViewport = opts.preserveViewport !== false;
         const bounds = getPayloadBoundsMs(payloads);
         let requestedViewport = preserveViewport ? viewportByRange[activeRange] : null;
@@ -5027,6 +5253,38 @@
               },
               order: 2,
             });
+
+            const patternMarkers = detectCandlestickPatterns(p.points).map((marker) => ({
+              ...marker,
+              ticker: p.ticker,
+            }));
+            if (patternMarkers.length > 0) {
+              datasets.push({
+                type: "scatter",
+                label: `${p.ticker} patterns`,
+                data: patternMarkers,
+                yAxisID: "y",
+                order: 5,
+                showLine: false,
+                borderColor: (ctx) => {
+                  const bias = ctx?.raw?.patternBias;
+                  if (bias === "bullish") return "#16a34a";
+                  if (bias === "bearish") return "#dc2626";
+                  return "#f59e0b";
+                },
+                backgroundColor: "#ffffff",
+                pointRadius: 6,
+                pointHoverRadius: 8,
+                pointHitRadius: 18,
+                pointBorderWidth: 2,
+                pointStyle: "circle",
+                isPatternMarker: true,
+              });
+              patternMarkers.forEach((pt) => {
+                const yv = Number(pt?.y);
+                if (Number.isFinite(yv)) yValuesForLock.push(yv);
+              });
+            }
           } else {
             datasets.push({
               label: p.ticker,
@@ -5307,14 +5565,32 @@
           options: {
             responsive: true,
             maintainAspectRatio: false,
-            interaction: { mode: "index", intersect: false },
+            interaction: chartTypeMode === "candles"
+              ? { mode: "nearest", intersect: true, axis: "xy" }
+              : { mode: "index", intersect: false },
+            onClick: (evt, elements, chart) => {
+              if (!chart) return;
+              const strictHits = chart.getElementsAtEventForMode(evt, "nearest", { intersect: true, axis: "xy" }, true) || [];
+              let match = strictHits.find((hit) => chart.data?.datasets?.[hit.datasetIndex]?.isPatternMarker);
+              if (!match && chartTypeMode === "candles") {
+                const nearHits = chart.getElementsAtEventForMode(evt, "nearest", { intersect: false, axis: "xy" }, true) || [];
+                match = nearHits.find((hit) => chart.data?.datasets?.[hit.datasetIndex]?.isPatternMarker);
+              }
+              if (match) {
+                const ds = chart.data.datasets[match.datasetIndex];
+                const raw = ds?.data?.[match.index];
+                showPatternDetail(raw, { pinned: true });
+              } else if (chartTypeMode === "candles") {
+                hidePatternDetail();
+              }
+            },
             plugins: {
               legend: {
                 display: true,
                 labels: {
                   filter: (legendItem, data) => {
                     const ds = data.datasets[legendItem.datasetIndex];
-                    return !ds.isReferenceLine && !ds.isVolume;
+                    return !ds.isReferenceLine && !ds.isVolume && !ds.isPatternMarker;
                   },
                 },
               },
