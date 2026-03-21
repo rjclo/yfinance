@@ -1572,6 +1572,7 @@ def api_chart_explain():
     range_key = str(payload.get("range") or "").strip().lower()
     scale = str(payload.get("scale") or "").strip().lower()
     metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
+    news_items = payload.get("news_items") if isinstance(payload.get("news_items"), list) else []
     trend_image = str(payload.get("trend_image") or "")
     regime_image = str(payload.get("regime_image") or "")
 
@@ -1606,21 +1607,57 @@ def api_chart_explain():
     window = metrics.get("window") if isinstance(metrics.get("window"), dict) else {}
     summary = metrics.get("summary") if isinstance(metrics.get("summary"), dict) else {}
     indicators = metrics.get("indicators") if isinstance(metrics.get("indicators"), dict) else {}
+    patterns = metrics.get("patterns") if isinstance(metrics.get("patterns"), list) else []
+
+    horizon_map = {
+        "1d": "next 30 minutes to 1 trading day",
+        "10days": "next 1 to 3 trading days",
+        "1w": "next 1 to 3 trading days",
+        "1m": "next 1 to 2 weeks",
+        "3m": "next 2 to 4 weeks",
+        "1y": "next 1 to 3 months",
+        "max": "next 1 to 3 months",
+    }
+    outlook_horizon = horizon_map.get(range_key, "next 1 to 3 trading days")
+    trimmed_news = []
+    for item in news_items[:6]:
+        if not isinstance(item, dict):
+            continue
+        headline = str(item.get("headline") or "").strip()
+        if not headline:
+            continue
+        trimmed_news.append(
+            {
+                "headline": headline,
+                "source": str(item.get("source") or "").strip(),
+                "published_at": str(item.get("published_at") or "").strip(),
+                "summary": str(item.get("summary") or "").strip()[:400],
+            }
+        )
 
     prompt_text = (
         "You are a technical-analysis assistant. Read both images and metrics for the same visible chart window. "
-        "Explain in plain English with concise bullets and no hype. Do not give financial advice or guarantee direction.\n\n"
+        "Explain in plain English with concise bullets and no hype. Do not give financial advice or guarantee direction. "
+        "Use probabilistic language only. Do not claim certainty or a guaranteed forecast.\n\n"
         f"Ticker: {ticker}\n"
         f"Range selected: {range_key}\n"
         f"Scale: {scale}\n"
-        f"Visible window metrics JSON: {json.dumps({'window': window, 'summary': summary, 'indicators': indicators}, ensure_ascii=True)}\n\n"
-        "Priority: focus on bar/band interpretation. Explicitly compare Trend-view bands and Regime-view bands, and explain "
-        "what each recent red/green/yellow band implies for timing vs context. If trend and regime conflict, call that out.\n\n"
+        f"Requested outlook horizon: {outlook_horizon}\n"
+        f"Visible window metrics JSON: {json.dumps({'window': window, 'summary': summary, 'indicators': indicators, 'patterns': patterns, 'news': trimmed_news}, ensure_ascii=True)}\n\n"
+        "Priority order:\n"
+        "1. Explain the visible chart window.\n"
+        "2. Explicitly compare Trend-view bands and Regime-view bands, and explain what each recent red/green/yellow band implies for timing vs context.\n"
+        "3. Incorporate candlestick patterns if present.\n"
+        "4. Incorporate the recent news headlines as possible catalysts or risks.\n"
+        "5. Then summarize the most likely NEXT scenario over the requested outlook horizon.\n\n"
+        "If trend and regime conflict, call that out clearly. If news conflicts with technicals, call that out clearly.\n\n"
         "Return markdown with exactly these sections:\n"
         "1) Window Snapshot (3 bullets)\n"
-        "2) Band Interpretation (Trend + Regime) (3-6 bullets)\n"
-        "3) What Confirms / What Invalidates (2 bullets each)\n"
-        "4) Next Bars Checklist (numbered 1-3)\n"
+        "2) Band + Pattern Interpretation (Trend + Regime + Candles) (3-6 bullets)\n"
+        f"3) Next Outlook ({outlook_horizon})\n"
+        "   - include: bias, confidence, likely scenario, why, and news impact\n"
+        "4) What Confirms / What Invalidates (2 bullets each)\n"
+        "5) Next Bars Checklist (numbered 1-3)\n"
     )
 
     use_openai = (requested_provider == "openai" and openai_key) or (requested_provider not in ("gemini",) and openai_key)

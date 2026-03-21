@@ -590,6 +590,11 @@
         white-space: pre-wrap;
       }
 
+      .hint-explain-tab-strip {
+        margin-top: 10px;
+        margin-bottom: 10px;
+      }
+
       .hint-popover[hidden] {
         display: none;
       }
@@ -1196,7 +1201,12 @@
                     <button id="aiExplainBtn" type="button" class="ai-btn ai-btn-primary">Explain</button>
                   </div>
                 </div>
-                <div id="hintExplainBody" class="hint-explain-body"></div>
+                <div class="chrome-tab-strip hint-explain-tab-strip">
+                  <button id="explainTabCurrent" type="button" class="chrome-tab active">Current Read</button>
+                  <button id="explainTabPrediction" type="button" class="chrome-tab">Next Outlook</button>
+                </div>
+                <div id="hintExplainBodyCurrent" class="hint-explain-body"></div>
+                <div id="hintExplainBodyPrediction" class="hint-explain-body" hidden></div>
               </div>
             </div>
           </div>
@@ -1362,7 +1372,10 @@
       const rulesHintPopover = document.getElementById("rulesHintPopover");
       const rulesHintHeader = document.getElementById("rulesHintHeader");
       const rulesHintCloseBtn = document.getElementById("rulesHintCloseBtn");
-      const hintExplainBody = document.getElementById("hintExplainBody");
+      const hintExplainBodyCurrent = document.getElementById("hintExplainBodyCurrent");
+      const hintExplainBodyPrediction = document.getElementById("hintExplainBodyPrediction");
+      const explainTabCurrent = document.getElementById("explainTabCurrent");
+      const explainTabPrediction = document.getElementById("explainTabPrediction");
       const aiProviderSelect = document.getElementById("aiProviderSelect");
       const aiModelSelect = document.getElementById("aiModelSelect");
       const aiKeyInput = document.getElementById("aiKeyInput");
@@ -1377,6 +1390,7 @@
       const newsDialogCloseBtn = document.getElementById("newsDialogCloseBtn");
       const newsDialogBody = document.getElementById("newsDialogBody");
       let explainRequestSeq = 0;
+      let activeExplainTab = "current";
 
       async function loadAiSettings() {
         try {
@@ -1420,6 +1434,43 @@
           aiModelSelect.appendChild(optgroup);
         });
         if (savedModel) aiModelSelect.value = savedModel;
+      }
+
+      function setExplainTab(tab) {
+        activeExplainTab = tab === "prediction" ? "prediction" : "current";
+        if (explainTabCurrent) explainTabCurrent.classList.toggle("active", activeExplainTab === "current");
+        if (explainTabPrediction) explainTabPrediction.classList.toggle("active", activeExplainTab === "prediction");
+        if (hintExplainBodyCurrent) hintExplainBodyCurrent.hidden = activeExplainTab !== "current";
+        if (hintExplainBodyPrediction) hintExplainBodyPrediction.hidden = activeExplainTab !== "prediction";
+      }
+
+      function splitExplainText(text) {
+        const src = String(text || "").trim();
+        if (!src) return { current: "", prediction: "" };
+        const splitPatterns = [
+          /(?:^|\n)\s*#*\s*3[\)\.\:\-]?\s*Next Outlook\b/i,
+          /(?:^|\n)\s*#*\s*Next Outlook\b/i,
+          /(?:^|\n)\s*#*\s*3[\)\.\:\-]?\s*Likely Next Move\b/i,
+          /(?:^|\n)\s*#*\s*Likely Next Move\b/i,
+        ];
+        const nextMatch = splitPatterns
+          .map((pattern) => src.match(pattern))
+          .find((match) => match && match.index != null);
+        if (!nextMatch || nextMatch.index == null) {
+          return { current: src, prediction: src };
+        }
+        const idx = nextMatch.index;
+        return {
+          current: src.slice(0, idx).trim(),
+          prediction: src.slice(idx).trim(),
+        };
+      }
+
+      function setExplainBodyText(text, opts = {}) {
+        const parts = splitExplainText(text);
+        if (hintExplainBodyCurrent) hintExplainBodyCurrent.textContent = parts.current || text || "";
+        if (hintExplainBodyPrediction) hintExplainBodyPrediction.textContent = parts.prediction || text || "";
+        if (opts.switchToPrediction) setExplainTab("prediction");
       }
 
       function showCurrentKey() {
@@ -1472,6 +1523,13 @@
             setTimeout(() => { aiSettingsSaveBtn.textContent = "Save Settings"; }, 2000);
           }
         });
+      }
+
+      if (explainTabCurrent) {
+        explainTabCurrent.addEventListener("click", () => setExplainTab("current"));
+      }
+      if (explainTabPrediction) {
+        explainTabPrediction.addEventListener("click", () => setExplainTab("prediction"));
       }
 
       loadAiSettings();
@@ -4973,6 +5031,11 @@
         const clippedPayload = { ...payload, points: visible };
         const trendBands = buildTrendBands(clippedPayload);
         const regime = buildRegimeAnalysis(clippedPayload);
+        const visiblePatterns = detectCandlestickPatterns(visible).map((p) => ({
+          t: p.x,
+          name: p.patternName,
+          bias: p.patternBias,
+        }));
 
         const avgVol = vols.length ? (vols.reduce((a, b) => a + b, 0) / vols.length) : null;
         const lastVol = Number(last?.volume || 0);
@@ -5008,34 +5071,55 @@
             regime_score: fmt(regime?.current?.score, 0),
             regime_confidence: fmt(regime?.current?.confidence, 0),
           },
+          patterns: visiblePatterns.slice(-12),
         };
       }
 
+      async function fetchNewsForExplain(symbol) {
+        const ticker = sanitizeTicker(symbol);
+        if (!ticker) return [];
+        try {
+          const res = await fetch(`/api/news?ticker=${encodeURIComponent(ticker)}`);
+          const payload = await res.json().catch(() => ({}));
+          if (!res.ok) return [];
+          const items = Array.isArray(payload?.items) ? payload.items : [];
+          return items.slice(0, 6).map((item) => ({
+            headline: String(item?.headline || "").trim(),
+            source: String(item?.source || "").trim(),
+            published_at: String(item?.published_at || "").trim(),
+            summary: String(item?.summary || "").trim(),
+          })).filter((item) => item.headline);
+        } catch (_) {
+          return [];
+        }
+      }
+
       async function explainCurrentChartWindow() {
-        if (!hintExplainBody) return;
+        if (!hintExplainBodyCurrent || !hintExplainBodyPrediction) return;
         const selected = getSelectedSymbols();
         if (selected.length !== 1) {
-          hintExplainBody.textContent = "Select exactly one ticker to generate AI explanation.";
+          setExplainBodyText("Select exactly one ticker to generate AI explanation.");
           return;
         }
         const payload = latestPayloadByTicker[selected[0]];
         if (!payload || !Array.isArray(payload.points) || payload.points.length === 0 || !priceChart) {
-          hintExplainBody.textContent = "No chart data available for explanation.";
+          setExplainBodyText("No chart data available for explanation.");
           return;
         }
 
         const reqSeq = ++explainRequestSeq;
-        hintExplainBody.textContent = "Generating AI explanation for visible window...";
+        setExplainBodyText("Generating AI explanation for visible window...");
         if (aiExplainBtn) { aiExplainBtn.disabled = true; aiExplainBtn.textContent = "Explaining..."; }
 
         const metrics = buildExplainMetrics(payload);
         if (!metrics) {
-          hintExplainBody.textContent = "Unable to read current chart window. Try resetting zoom and retry.";
+          setExplainBodyText("Unable to read current chart window. Try resetting zoom and retry.");
           return;
         }
 
         const startMode = bandViewMode;
         try {
+          const newsItems = await fetchNewsForExplain(payload.ticker);
           const trendCapture = await captureChartImageForMode("trend", [payload]);
           const trendImage = trendCapture.image;
           const regimeCapture = await captureChartImageForMode("regime", [payload]);
@@ -5055,6 +5139,7 @@
               range: activeRange,
               scale: resolvedScaleMode,
               metrics,
+              news_items: newsItems,
               trend_image: trendImage,
               regime_image: regimeImage,
               provider: aiProviderSelect?.value || "",
@@ -5067,13 +5152,13 @@
             const msg = [out.error || "Explain request failed.", out.hint || "", out.detail || ""]
               .filter(Boolean)
               .join(" ");
-            hintExplainBody.textContent = msg || "Explain request failed.";
+            setExplainBodyText(msg || "Explain request failed.");
             return;
           }
-          hintExplainBody.textContent = String(out.explanation || "").trim() || "No explanation returned.";
+          setExplainBodyText(String(out.explanation || "").trim() || "No explanation returned.", { switchToPrediction: true });
         } catch (err) {
           if (reqSeq !== explainRequestSeq) return;
-          hintExplainBody.textContent = `Explain request failed: ${err?.message || err}`;
+          setExplainBodyText(`Explain request failed: ${err?.message || err}`);
         } finally {
           if (aiExplainBtn) { aiExplainBtn.disabled = false; aiExplainBtn.textContent = "Explain"; }
           if (startMode !== bandViewMode) {
