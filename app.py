@@ -1480,6 +1480,45 @@ def _call_gemini(api_key: str, prompt: str, trend_img: str, regime_img: str, ove
     return "", model, err or {"error": "No explanation text returned from Gemini.", "status": 502}
 
 
+def _call_groq(api_key: str, prompt: str, trend_img: str, regime_img: str, override_model: str = "") -> tuple[str, str, dict | None]:
+    model = override_model.strip() if override_model else (os.getenv("GROQ_CHART_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct").strip() or "meta-llama/llama-4-scout-17b-16e-instruct")
+    content: list = [{"type": "text", "text": prompt}]
+    for label, img in (("Trend view screenshot:", trend_img), ("Regime view screenshot:", regime_img)):
+        content.append({"type": "text", "text": label})
+        if img.startswith("data:"):
+            content.append({"type": "image_url", "image_url": {"url": img}})
+        else:
+            content.append({"type": "text", "text": f"[image: {img[:100]}]"})
+    body = {"model": model, "messages": [{"role": "user", "content": content}]}
+    req_data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.groq.com/openai/v1/chat/completions",
+        data=req_data,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+            "User-Agent": "Mozilla/5.0 (compatible; finlab-chart-explain/1.0)",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            raw = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace") if exc.fp else str(exc)
+        return "", model, {"error": "Groq request failed", "detail": detail[:2000], "status": 502}
+    except Exception as exc:
+        return "", model, {"error": "Groq request failed", "detail": str(exc)[:1000], "status": 502}
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return "", model, {"error": "Groq response parse failed", "detail": raw[:2000], "status": 502}
+    text = ((obj.get("choices") or [{}])[0].get("message") or {}).get("content", "").strip()
+    if not text:
+        return "", model, {"error": "No explanation text returned from Groq.", "status": 502}
+    return text, model, None
+
+
 _AI_PROVIDER_CATALOG = {
     "openai": {
         "name": "OpenAI",
@@ -1496,6 +1535,14 @@ _AI_PROVIDER_CATALOG = {
         "model_groups": [
             {"label": "Free Tier", "models": ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.5-pro"]},
             {"label": "Preview", "models": ["gemini-3.1-flash-lite", "gemini-3.1-pro-preview"]},
+        ],
+    },
+    "groq": {
+        "name": "Groq",
+        "env_key": "GROQ_API_KEY",
+        "model_groups": [
+            {"label": "Vision", "models": ["meta-llama/llama-4-scout-17b-16e-instruct", "meta-llama/llama-4-maverick-17b-128e-instruct"]},
+            {"label": "Fast", "models": ["llama-3.3-70b-versatile", "llama3-70b-8192"]},
         ],
     },
 }
@@ -1596,7 +1643,8 @@ def api_chart_explain():
 
     openai_key = _get_ai_key("openai")
     gemini_key = _get_ai_key("gemini")
-    if not openai_key and not gemini_key:
+    groq_key = _get_ai_key("groq")
+    if not openai_key and not gemini_key and not groq_key:
         return jsonify(
             {
                 "error": "No AI API key is configured.",
@@ -1660,19 +1708,23 @@ def api_chart_explain():
         "5) Next Bars Checklist (numbered 1-3)\n"
     )
 
-    use_openai = (requested_provider == "openai" and openai_key) or (requested_provider not in ("gemini",) and openai_key)
-    use_gemini = not use_openai and gemini_key
+    key_map = {"openai": openai_key, "gemini": gemini_key, "groq": groq_key}
+    provider = requested_provider if (requested_provider in key_map and key_map[requested_provider]) else next(
+        (pid for pid in ("groq", "openai", "gemini") if key_map[pid]), None
+    )
 
-    if use_openai:
+    if provider == "groq":
+        text, model, err = _call_groq(groq_key, prompt_text, trend_image, regime_image, override_model=requested_model)
+    elif provider == "openai":
         text, model, err = _call_openai(openai_key, prompt_text, trend_image, regime_image, override_model=requested_model)
-    elif use_gemini:
+    elif provider == "gemini":
         text, model, err = _call_gemini(gemini_key, prompt_text, trend_image, regime_image, override_model=requested_model)
     else:
         return jsonify({"error": f"Provider '{requested_provider}' not available — no API key configured."}), 400
 
     if err:
         return jsonify(err), err.get("status", 502)
-    return jsonify({"ok": True, "explanation": text, "model": model, "provider": "openai" if use_openai else "gemini"})
+    return jsonify({"ok": True, "explanation": text, "model": model, "provider": provider})
 
 
 @app.get("/api/news")

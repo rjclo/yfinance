@@ -2432,7 +2432,8 @@
       function getSelectedSymbols() {
         const active = getActiveCategory();
         const fromActive = active ? (active.items || []).filter((t) => t.selected).map((t) => t.symbol) : [];
-        return Array.from(new Set(fromActive)).slice(0, MAX_SELECTED);
+        const fromImported = importedPortfolios.flatMap((p) => (p.tickers || []).filter((t) => t.selected).map((t) => sanitizeTicker(t.symbol))).filter(Boolean);
+        return Array.from(new Set([...fromActive, ...fromImported])).slice(0, MAX_SELECTED);
       }
 
       function getSelectedImportedHoldings() {
