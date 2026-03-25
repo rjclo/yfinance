@@ -621,6 +621,61 @@
         flex-direction: column;
       }
 
+      .config-dialog {
+        position: fixed;
+        top: 88px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 1815;
+        width: min(760px, calc(100vw - 32px));
+        max-height: calc(100vh - 32px);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: #fff;
+        box-shadow: 0 14px 30px rgba(15, 23, 42, 0.18);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .config-dialog[hidden] {
+        display: none;
+      }
+
+      .config-dialog-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--border);
+        font-weight: 700;
+        color: #0f172a;
+      }
+
+      .config-dialog-body {
+        padding: 16px;
+        overflow: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+
+      .config-section {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .config-section-title {
+        font-weight: 700;
+        color: #0f172a;
+      }
+
+      .config-help {
+        font-size: 12px;
+        color: #64748b;
+      }
+
       .news-dialog[hidden] {
         display: none;
       }
@@ -785,6 +840,33 @@
 
       .viewmode-toggle.on .viewmode-knob {
         left: 29px;
+      }
+
+      .backtest-mode-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin: 0 0 12px;
+        padding: 10px 12px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: #f8fafc;
+      }
+
+      .backtest-mode-copy {
+        min-width: 0;
+      }
+
+      .backtest-mode-title {
+        font-weight: 700;
+        color: #0f172a;
+      }
+
+      .backtest-mode-subtitle {
+        font-size: 13px;
+        color: var(--muted);
+        margin-top: 2px;
       }
 
       .meta {
@@ -1180,26 +1262,8 @@
               </ol>
               <div class="hint-explain">
                 <div class="hint-explain-title">AI Explain Current Window</div>
-                <div class="hint-explain-settings">
-                  <div class="ai-setting-row">
-                    <label class="ai-setting-label">Provider</label>
-                    <select id="aiProviderSelect" class="ai-select"></select>
-                  </div>
-                  <div class="ai-setting-row">
-                    <label class="ai-setting-label">Model</label>
-                    <select id="aiModelSelect" class="ai-select"></select>
-                  </div>
-                  <div class="ai-setting-row">
-                    <label class="ai-setting-label">API Key</label>
-                    <div class="ai-key-wrap">
-                      <input id="aiKeyInput" type="password" class="ai-key-input" placeholder="Enter API key" autocomplete="off" />
-                      <button id="aiKeyToggle" type="button" class="ai-key-toggle">Reveal</button>
-                    </div>
-                  </div>
-                  <div class="ai-setting-actions">
-                    <button id="aiSettingsSaveBtn" type="button" class="ai-btn ai-btn-secondary">Save Settings</button>
-                    <button id="aiExplainBtn" type="button" class="ai-btn ai-btn-primary">Explain</button>
-                  </div>
+                <div class="ai-setting-actions">
+                  <button id="aiExplainBtn" type="button" class="ai-btn ai-btn-primary">Explain</button>
                 </div>
                 <div class="chrome-tab-strip hint-explain-tab-strip">
                   <button id="explainTabCurrent" type="button" class="chrome-tab active">Current Read</button>
@@ -1216,6 +1280,94 @@
               <button id="newsDialogCloseBtn" class="news-dialog-close" type="button" aria-label="Close news">X</button>
             </div>
             <div id="newsDialogBody" class="news-dialog-body">Select a ticker to load recent news.</div>
+          </div>
+          <div id="backtestDialog" class="news-dialog" hidden>
+            <div id="backtestDialogHeader" class="news-dialog-header">
+              <div id="backtestDialogTitle" class="news-dialog-title">Back Test</div>
+              <button id="backtestDialogCloseBtn" class="news-dialog-close" type="button" aria-label="Close back test">X</button>
+            </div>
+            <div id="backtestDialogBody" class="news-dialog-body">Run a back test from the center menu.</div>
+          </div>
+          <div id="scannerDialog" class="news-dialog" hidden>
+            <div id="scannerDialogHeader" class="news-dialog-header">
+              <div id="scannerDialogTitle" class="news-dialog-title">Scanner</div>
+              <button id="scannerDialogCloseBtn" class="news-dialog-close" type="button" aria-label="Close scanner">X</button>
+            </div>
+            <div id="scannerDialogBody" class="news-dialog-body">Run the scanner from the center menu.</div>
+          </div>
+          <div id="configDialog" class="config-dialog" hidden>
+            <div class="config-dialog-header">
+              <div>Config</div>
+              <button id="configDialogCloseBtn" class="hint-popover-close" type="button" aria-label="Close config">X</button>
+            </div>
+            <div class="config-dialog-body">
+              <div class="config-section">
+                <div class="config-section-title">Market Data</div>
+                <div class="ai-setting-row">
+                  <label class="ai-setting-label">Twelve</label>
+                  <div class="ai-key-wrap">
+                    <input id="configTwelveKeyInput" type="password" class="ai-key-input" placeholder="TWELVE_DATA_API_KEY" autocomplete="off" />
+                    <button id="configTwelveKeyToggle" type="button" class="ai-key-toggle">Reveal</button>
+                  </div>
+                </div>
+              </div>
+              <div class="config-section">
+                <div class="config-section-title">News</div>
+                <div class="ai-setting-row">
+                  <label class="ai-setting-label">Finnhub</label>
+                  <div class="ai-key-wrap">
+                    <input id="configFinnhubKeyInput" type="password" class="ai-key-input" placeholder="FINNHUB_API_KEY" autocomplete="off" />
+                    <button id="configFinnhubKeyToggle" type="button" class="ai-key-toggle">Reveal</button>
+                  </div>
+                </div>
+              </div>
+              <div class="config-section">
+                <div class="config-section-title">AI Defaults</div>
+                <div class="ai-setting-row">
+                  <label class="ai-setting-label">Provider</label>
+                  <select id="configLlmProviderSelect" class="ai-select"></select>
+                </div>
+                <div class="ai-setting-row">
+                  <label class="ai-setting-label">Model</label>
+                  <select id="configLlmModelSelect" class="ai-select"></select>
+                </div>
+                <div class="config-help">Environment variables override .env. When they differ, the effective environment value is written back into .env.</div>
+              </div>
+              <div class="config-section">
+                <div class="config-section-title">AI API Keys</div>
+                <div class="ai-setting-row">
+                  <label class="ai-setting-label">OpenAI</label>
+                  <div class="ai-key-wrap">
+                    <input id="configOpenAiKeyInput" type="password" class="ai-key-input" placeholder="OPENAI_API_KEY" autocomplete="off" />
+                    <button id="configOpenAiKeyToggle" type="button" class="ai-key-toggle">Reveal</button>
+                  </div>
+                </div>
+                <div class="ai-setting-row">
+                  <label class="ai-setting-label">Gemini</label>
+                  <div class="ai-key-wrap">
+                    <input id="configGeminiKeyInput" type="password" class="ai-key-input" placeholder="GEMINI_API_KEY" autocomplete="off" />
+                    <button id="configGeminiKeyToggle" type="button" class="ai-key-toggle">Reveal</button>
+                  </div>
+                </div>
+                <div class="ai-setting-row">
+                  <label class="ai-setting-label">Groq</label>
+                  <div class="ai-key-wrap">
+                    <input id="configGroqKeyInput" type="password" class="ai-key-input" placeholder="GROQ_API_KEY" autocomplete="off" />
+                    <button id="configGroqKeyToggle" type="button" class="ai-key-toggle">Reveal</button>
+                  </div>
+                </div>
+                <div class="ai-setting-row">
+                  <label class="ai-setting-label">Claude</label>
+                  <div class="ai-key-wrap">
+                    <input id="configAnthropicKeyInput" type="password" class="ai-key-input" placeholder="ANTHROPIC_API_KEY" autocomplete="off" />
+                    <button id="configAnthropicKeyToggle" type="button" class="ai-key-toggle">Reveal</button>
+                  </div>
+                </div>
+              </div>
+              <div class="ai-setting-actions">
+                <button id="configSaveBtn" type="button" class="ai-btn ai-btn-primary">Save Config</button>
+              </div>
+            </div>
           </div>
           <div class="controls">
             <button id="centerMenuBtn" class="controls-menu-btn" title="Actions">&#8942;</button>
@@ -1376,52 +1528,97 @@
       const hintExplainBodyPrediction = document.getElementById("hintExplainBodyPrediction");
       const explainTabCurrent = document.getElementById("explainTabCurrent");
       const explainTabPrediction = document.getElementById("explainTabPrediction");
-      const aiProviderSelect = document.getElementById("aiProviderSelect");
-      const aiModelSelect = document.getElementById("aiModelSelect");
-      const aiKeyInput = document.getElementById("aiKeyInput");
-      const aiKeyToggle = document.getElementById("aiKeyToggle");
-      const aiSettingsSaveBtn = document.getElementById("aiSettingsSaveBtn");
       const aiExplainBtn = document.getElementById("aiExplainBtn");
+      const configDialog = document.getElementById("configDialog");
+      const configDialogCloseBtn = document.getElementById("configDialogCloseBtn");
+      const configTwelveKeyInput = document.getElementById("configTwelveKeyInput");
+      const configFinnhubKeyInput = document.getElementById("configFinnhubKeyInput");
+      const configLlmProviderSelect = document.getElementById("configLlmProviderSelect");
+      const configLlmModelSelect = document.getElementById("configLlmModelSelect");
+      const configOpenAiKeyInput = document.getElementById("configOpenAiKeyInput");
+      const configGeminiKeyInput = document.getElementById("configGeminiKeyInput");
+      const configGroqKeyInput = document.getElementById("configGroqKeyInput");
+      const configAnthropicKeyInput = document.getElementById("configAnthropicKeyInput");
+      const configSaveBtn = document.getElementById("configSaveBtn");
+      const configKeyToggleMap = [
+        ["configTwelveKeyInput", "configTwelveKeyToggle"],
+        ["configFinnhubKeyInput", "configFinnhubKeyToggle"],
+        ["configOpenAiKeyInput", "configOpenAiKeyToggle"],
+        ["configGeminiKeyInput", "configGeminiKeyToggle"],
+        ["configGroqKeyInput", "configGroqKeyToggle"],
+        ["configAnthropicKeyInput", "configAnthropicKeyToggle"],
+      ];
       let aiProviders = [];
-      let aiKeys = {};
+      let appConfig = {
+        twelve_data_api_key: "",
+        finnhub_api_key: "",
+        llm_provider: "",
+        llm_model: "",
+        llm_keys: {},
+      };
       const newsDialog = document.getElementById("newsDialog");
       const newsDialogHeader = document.getElementById("newsDialogHeader");
       const newsDialogTitle = document.getElementById("newsDialogTitle");
       const newsDialogCloseBtn = document.getElementById("newsDialogCloseBtn");
       const newsDialogBody = document.getElementById("newsDialogBody");
+      const backtestDialog = document.getElementById("backtestDialog");
+      const backtestDialogHeader = document.getElementById("backtestDialogHeader");
+      const backtestDialogTitle = document.getElementById("backtestDialogTitle");
+      const backtestDialogCloseBtn = document.getElementById("backtestDialogCloseBtn");
+      const backtestDialogBody = document.getElementById("backtestDialogBody");
+      const scannerDialog = document.getElementById("scannerDialog");
+      const scannerDialogHeader = document.getElementById("scannerDialogHeader");
+      const scannerDialogTitle = document.getElementById("scannerDialogTitle");
+      const scannerDialogCloseBtn = document.getElementById("scannerDialogCloseBtn");
+      const scannerDialogBody = document.getElementById("scannerDialogBody");
       let explainRequestSeq = 0;
       let activeExplainTab = "current";
+      let backtestAlertMode = "strongest";
+      let lastBacktestPayload = null;
+      let lastBacktestUniverseLabel = "";
+      let lastBacktestTickers = [];
+      let lastScannerTickers = [];
+      let lastScannerUniverseLabel = "";
+      let scannerDragActive = false;
+      let scannerDragOffsetX = 0;
+      let scannerDragOffsetY = 0;
 
-      async function loadAiSettings() {
+      async function loadConfig() {
         try {
-          const res = await fetch("/api/ai-settings");
+          const res = await fetch("/api/config");
           const data = await res.json();
           aiProviders = data.providers || [];
-          aiKeys = {};
-          aiProviders.forEach((p) => { aiKeys[p.id] = p.key || ""; });
-          renderAiProviderSelect(data.provider, data.model);
-        } catch { aiProviders = []; }
+          appConfig = {
+            twelve_data_api_key: data.twelve_data_api_key || "",
+            finnhub_api_key: data.finnhub_api_key || "",
+            llm_provider: data.llm_provider || "",
+            llm_model: data.llm_model || "",
+            llm_keys: data.llm_keys || {},
+          };
+          renderConfigDialog();
+        } catch {
+          aiProviders = [];
+        }
       }
 
-      function renderAiProviderSelect(savedProvider, savedModel) {
-        if (!aiProviderSelect) return;
-        aiProviderSelect.innerHTML = "";
+      function renderConfigProviderSelect(savedProvider, savedModel) {
+        if (!configLlmProviderSelect) return;
+        configLlmProviderSelect.innerHTML = "";
         aiProviders.forEach((p) => {
           const opt = document.createElement("option");
           opt.value = p.id;
           opt.textContent = p.name;
-          aiProviderSelect.appendChild(opt);
+          configLlmProviderSelect.appendChild(opt);
         });
-        if (savedProvider) aiProviderSelect.value = savedProvider;
-        renderAiModelSelect(savedModel);
-        showCurrentKey();
+        if (savedProvider) configLlmProviderSelect.value = savedProvider;
+        renderConfigModelSelect(savedModel);
       }
 
-      function renderAiModelSelect(savedModel) {
-        if (!aiModelSelect || !aiProviderSelect) return;
-        const provider = aiProviders.find((p) => p.id === aiProviderSelect.value);
+      function renderConfigModelSelect(savedModel) {
+        if (!configLlmModelSelect || !configLlmProviderSelect) return;
+        const provider = aiProviders.find((p) => p.id === configLlmProviderSelect.value);
         const groups = provider?.model_groups || [];
-        aiModelSelect.innerHTML = "";
+        configLlmModelSelect.innerHTML = "";
         groups.forEach((g) => {
           const optgroup = document.createElement("optgroup");
           optgroup.label = g.label;
@@ -1431,9 +1628,19 @@
             opt.textContent = m;
             optgroup.appendChild(opt);
           });
-          aiModelSelect.appendChild(optgroup);
+          configLlmModelSelect.appendChild(optgroup);
         });
-        if (savedModel) aiModelSelect.value = savedModel;
+        if (savedModel) configLlmModelSelect.value = savedModel;
+      }
+
+      function renderConfigDialog() {
+        renderConfigProviderSelect(appConfig.llm_provider, appConfig.llm_model);
+        if (configTwelveKeyInput) configTwelveKeyInput.value = appConfig.twelve_data_api_key || "";
+        if (configFinnhubKeyInput) configFinnhubKeyInput.value = appConfig.finnhub_api_key || "";
+        if (configOpenAiKeyInput) configOpenAiKeyInput.value = appConfig.llm_keys?.openai || "";
+        if (configGeminiKeyInput) configGeminiKeyInput.value = appConfig.llm_keys?.gemini || "";
+        if (configGroqKeyInput) configGroqKeyInput.value = appConfig.llm_keys?.groq || "";
+        if (configAnthropicKeyInput) configAnthropicKeyInput.value = appConfig.llm_keys?.anthropic || "";
       }
 
       function setExplainTab(tab) {
@@ -1466,61 +1673,110 @@
         };
       }
 
+      function formatLocalForecastSummary(forecast) {
+        if (!forecast || typeof forecast !== "object") return "";
+        const pUp = Number(forecast.p_up_tomorrow);
+        const pDown = Number(forecast.p_down_tomorrow);
+        const confidence = Number(forecast.confidence_pct);
+        const bias = String(forecast.bias || "").trim();
+        const topDrivers = Array.isArray(forecast.top_drivers) ? forecast.top_drivers : [];
+        const lines = [];
+        lines.push("Local Forecast");
+        if (bias) lines.push(`- Bias: ${bias}`);
+        if (Number.isFinite(pUp) && Number.isFinite(pDown)) {
+          lines.push(`- P(up tomorrow): ${(pUp * 100).toFixed(1)}%`);
+          lines.push(`- P(down tomorrow): ${(pDown * 100).toFixed(1)}%`);
+        }
+        if (Number.isFinite(confidence)) lines.push(`- Confidence: ${confidence.toFixed(1)}%`);
+        topDrivers.slice(0, 3).forEach((driver) => {
+          const label = String(driver?.label || "").trim();
+          const detail = String(driver?.detail || "").trim();
+          if (!label) return;
+          lines.push(`- Driver: ${label}${detail ? ` — ${detail}` : ""}`);
+        });
+        lines.push("");
+        return lines.join("\n");
+      }
+
       function setExplainBodyText(text, opts = {}) {
         const parts = splitExplainText(text);
         if (hintExplainBodyCurrent) hintExplainBodyCurrent.textContent = parts.current || text || "";
-        if (hintExplainBodyPrediction) hintExplainBodyPrediction.textContent = parts.prediction || text || "";
+        if (hintExplainBodyPrediction) {
+          const forecastSummary = formatLocalForecastSummary(opts.localForecast);
+          hintExplainBodyPrediction.textContent = `${forecastSummary}${parts.prediction || text || ""}`.trim();
+        }
         if (opts.switchToPrediction) setExplainTab("prediction");
       }
 
-      function showCurrentKey() {
-        if (!aiKeyInput || !aiProviderSelect) return;
-        const pid = aiProviderSelect.value;
-        aiKeyInput.value = aiKeys[pid] || "";
-        aiKeyInput.type = "password";
-        if (aiKeyToggle) aiKeyToggle.textContent = "Reveal";
+      function openConfigDialog() {
+        if (!configDialog) return;
+        renderConfigDialog();
+        configDialog.hidden = false;
       }
 
-      if (aiProviderSelect) {
-        aiProviderSelect.addEventListener("change", () => {
-          renderAiModelSelect("");
-          showCurrentKey();
+      function closeConfigDialog() {
+        if (!configDialog) return;
+        configDialog.hidden = true;
+      }
+
+      if (configLlmProviderSelect) {
+        configLlmProviderSelect.addEventListener("change", () => {
+          renderConfigModelSelect("");
         });
       }
 
-      if (aiKeyToggle && aiKeyInput) {
-        aiKeyToggle.addEventListener("click", () => {
-          const hidden = aiKeyInput.type === "password";
-          aiKeyInput.type = hidden ? "text" : "password";
-          aiKeyToggle.textContent = hidden ? "Hide" : "Reveal";
+      configKeyToggleMap.forEach(([inputId, btnId]) => {
+        const input = document.getElementById(inputId);
+        const btn = document.getElementById(btnId);
+        if (!input || !btn) return;
+        btn.addEventListener("click", () => {
+          const hidden = input.type === "password";
+          input.type = hidden ? "text" : "password";
+          btn.textContent = hidden ? "Hide" : "Reveal";
         });
+      });
+
+      if (configDialogCloseBtn) {
+        configDialogCloseBtn.addEventListener("click", closeConfigDialog);
       }
 
-      if (aiKeyInput && aiProviderSelect) {
-        aiKeyInput.addEventListener("input", () => {
-          aiKeys[aiProviderSelect.value] = aiKeyInput.value;
-        });
-      }
-
-      if (aiSettingsSaveBtn) {
-        aiSettingsSaveBtn.addEventListener("click", async () => {
-          aiSettingsSaveBtn.textContent = "Saving...";
+      if (configSaveBtn) {
+        configSaveBtn.addEventListener("click", async () => {
+          configSaveBtn.textContent = "Saving...";
           try {
-            const res = await fetch("/api/ai-settings", {
+            const payload = {
+              twelve_data_api_key: configTwelveKeyInput?.value || "",
+              finnhub_api_key: configFinnhubKeyInput?.value || "",
+              llm_provider: configLlmProviderSelect?.value || "",
+              llm_model: configLlmModelSelect?.value || "",
+              llm_keys: {
+                openai: configOpenAiKeyInput?.value || "",
+                gemini: configGeminiKeyInput?.value || "",
+                groq: configGroqKeyInput?.value || "",
+                anthropic: configAnthropicKeyInput?.value || "",
+              },
+            };
+            const res = await fetch("/api/config", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                provider: aiProviderSelect?.value || "",
-                model: aiModelSelect?.value || "",
-                keys: aiKeys,
-              }),
+              body: JSON.stringify(payload),
             });
             if (!res.ok) throw new Error("Save failed");
-            aiSettingsSaveBtn.textContent = "Saved!";
-            setTimeout(() => { aiSettingsSaveBtn.textContent = "Save Settings"; }, 1500);
+            const data = await res.json();
+            aiProviders = data.providers || aiProviders;
+            appConfig = {
+              twelve_data_api_key: data.twelve_data_api_key || "",
+              finnhub_api_key: data.finnhub_api_key || "",
+              llm_provider: data.llm_provider || "",
+              llm_model: data.llm_model || "",
+              llm_keys: data.llm_keys || {},
+            };
+            renderConfigDialog();
+            configSaveBtn.textContent = "Saved!";
+            setTimeout(() => { configSaveBtn.textContent = "Save Config"; }, 1500);
           } catch {
-            aiSettingsSaveBtn.textContent = "Save Failed";
-            setTimeout(() => { aiSettingsSaveBtn.textContent = "Save Settings"; }, 2000);
+            configSaveBtn.textContent = "Save Failed";
+            setTimeout(() => { configSaveBtn.textContent = "Save Config"; }, 2000);
           }
         });
       }
@@ -1532,7 +1788,7 @@
         explainTabPrediction.addEventListener("click", () => setExplainTab("prediction"));
       }
 
-      loadAiSettings();
+      loadConfig();
 
       if (aiExplainBtn) {
         aiExplainBtn.addEventListener("click", () => explainCurrentChartWindow());
@@ -1544,6 +1800,9 @@
       let newsDragActive = false;
       let newsDragOffsetX = 0;
       let newsDragOffsetY = 0;
+      let backtestDragActive = false;
+      let backtestDragOffsetX = 0;
+      let backtestDragOffsetY = 0;
       let activeNewsTicker = localStorage.getItem(NEWS_LAST_TICKER_KEY) || "";
 
       function sanitizeTicker(raw) {
@@ -2434,6 +2693,48 @@
         const fromActive = active ? (active.items || []).filter((t) => t.selected).map((t) => t.symbol) : [];
         const fromImported = importedPortfolios.flatMap((p) => (p.tickers || []).filter((t) => t.selected).map((t) => sanitizeTicker(t.symbol))).filter(Boolean);
         return Array.from(new Set([...fromActive, ...fromImported])).slice(0, MAX_SELECTED);
+      }
+
+      function getVisibleLeftSymbols() {
+        const active = getActiveCategory();
+        const items = active ? (active.items || []) : [];
+        return Array.from(new Set(items.map((t) => sanitizeTicker(t.symbol)).filter(Boolean)));
+      }
+
+      function getAllLeftCategorySymbols() {
+        return Array.from(
+          new Set(
+            leftCategories
+              .flatMap((category) => category?.items || [])
+              .map((ticker) => sanitizeTicker(ticker.symbol))
+              .filter(Boolean)
+          )
+        );
+      }
+
+      function getBacktestSymbols() {
+        const active = getActiveCategory();
+        const items = active ? (active.items || []) : [];
+        const checked = Array.from(
+          new Set(
+            items
+              .filter((t) => !!t.selected)
+              .map((t) => sanitizeTicker(t.symbol))
+              .filter(Boolean)
+          )
+        );
+        if (checked.length) {
+          return { tickers: checked, universeLabel: "checked tickers in active left-panel category" };
+        }
+        const allLeft = getAllLeftCategorySymbols();
+        return { tickers: allLeft, universeLabel: "all tickers across all left-panel categories" };
+      }
+
+      function getScannerSymbols() {
+        return {
+          tickers: getAllLeftCategorySymbols(),
+          universeLabel: "all tickers across all left-panel categories",
+        };
       }
 
       function getSelectedImportedHoldings() {
@@ -3575,6 +3876,434 @@
             `).join("")}
           </div>
         `;
+      }
+
+      function renderBacktestDialog(payload, errorMessage = "") {
+        if (!backtestDialogTitle || !backtestDialogBody) return;
+        backtestDialogTitle.textContent = "Back Test";
+        if (errorMessage) {
+          backtestDialogBody.innerHTML = `<div class="meta">${escapeHtml(errorMessage)}</div>`;
+          return;
+        }
+        lastBacktestPayload = payload || null;
+        const results = Array.isArray(payload?.results) ? payload.results : [];
+        const summary = payload?.summary || {};
+        const thresholds = payload?.thresholds || {};
+        const universeLabel = String(payload?.universe_label || summary?.universe_label || "selected backtest universe");
+        const modelInfo = summary?.model && typeof summary.model === "object" ? summary.model : null;
+        const calibrationBuckets = Array.isArray(summary?.calibration_buckets) ? summary.calibration_buckets : [];
+        const baselines = Array.isArray(summary?.baselines) ? summary.baselines : [];
+        const thresholdSweep = Array.isArray(summary?.threshold_sweep) ? summary.threshold_sweep : [];
+        const recommendedThresholds = summary?.recommended_thresholds && typeof summary.recommended_thresholds === "object"
+          ? summary.recommended_thresholds
+          : null;
+        const errors = Array.isArray(payload?.errors) ? payload.errors : [];
+        const strongestThresholds = { prob_threshold: 0.90, confidence_threshold: 50.0 };
+        const activeThresholdCopy = backtestAlertMode === "more"
+          ? {
+              title: "More Signals",
+              subtitle: "Uses the broader threshold so you see more names, with lower expected precision.",
+              prob_threshold: Number(recommendedThresholds?.prob_threshold ?? 0.80),
+              confidence_threshold: Number(recommendedThresholds?.confidence_threshold ?? 50.0),
+            }
+          : {
+              title: "Strongest Alerts",
+              subtitle: "Uses the 90%+ tail only. Expect fewer names, but historically better precision.",
+              prob_threshold: strongestThresholds.prob_threshold,
+              confidence_threshold: strongestThresholds.confidence_threshold,
+            };
+        const ninetyBucket = calibrationBuckets.find((bucket) => String(bucket?.label || "") === "90%+");
+        const ninetyBucketText = ninetyBucket && ninetyBucket.hit_rate != null
+          ? `${Number(ninetyBucket.hit_rate).toFixed(1)}% on ${String(ninetyBucket.count || 0)} signals`
+          : "n/a";
+        const baselineLeader = baselines.length
+          ? baselines.reduce((best, item) => (Number(item?.hit_rate || 0) > Number(best?.hit_rate || 0) ? item : best), baselines[0])
+          : null;
+        const baselineSummary = baselineLeader?.hit_rate == null
+          ? "No baseline comparison available."
+          : `Best trivial rule: ${String(baselineLeader.name || "baseline")} at ${Number(baselineLeader.hit_rate).toFixed(1)}%. The trained model is only worth using if its alert threshold beats that cleanly.`;
+        const rows = results.map((item) => {
+          const upRate = item?.strong_up_hit_rate == null ? "n/a" : `${Number(item.strong_up_hit_rate).toFixed(1)}%`;
+          const downRate = item?.strong_down_hit_rate == null ? "n/a" : `${Number(item.strong_down_hit_rate).toFixed(1)}%`;
+          const recent = Array.isArray(item?.recent_strong_signals) ? item.recent_strong_signals.slice(-2) : [];
+          const recentText = recent.length
+            ? recent.map((sig) => `${escapeHtml(sig.date || "")}: ${escapeHtml(String(sig.bias || ""))} (${Number(sig.actual_return_pct || 0).toFixed(2)}%)`).join("<br>")
+            : '<span class="meta">No signals at threshold.</span>';
+          return `
+            <tr>
+              <td><strong>${escapeHtml(item?.ticker || "")}</strong></td>
+              <td>${escapeHtml(String(item?.days_tested ?? ""))}</td>
+              <td>${item?.overall_hit_rate == null ? "n/a" : `${Number(item.overall_hit_rate).toFixed(1)}%`}</td>
+              <td>${escapeHtml(String(item?.strong_up_signals ?? 0))} / ${upRate}</td>
+              <td>${escapeHtml(String(item?.strong_down_signals ?? 0))} / ${downRate}</td>
+              <td>${recentText}</td>
+            </tr>
+          `;
+        }).join("");
+        const errorHtml = errors.length
+          ? `<div class="meta" style="margin-top:12px;color:#b42318;">Errors: ${escapeHtml(errors.join(" | "))}</div>`
+          : "";
+        const calibrationHtml = calibrationBuckets.length ? `
+          <div style="margin:16px 0 12px;">
+            <strong>Calibration</strong><br>
+            <div class="meta" style="margin:4px 0 8px;">Higher probability buckets should show higher realized hit rates. If they do not, the score mapping is still overstating certainty.</div>
+            <table class="holdings-table" style="width:100%; table-layout:fixed;">
+              <colgroup>
+                <col style="width:40%;">
+                <col style="width:25%;">
+                <col style="width:35%;">
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>Probability Bucket</th>
+                  <th>Signals</th>
+                  <th>Realized Hit Rate</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${calibrationBuckets.map((bucket) => `
+                  <tr>
+                    <td>${escapeHtml(String(bucket?.label || ""))}</td>
+                    <td>${escapeHtml(String(bucket?.count ?? 0))}</td>
+                    <td>${bucket?.hit_rate == null ? "n/a" : `${Number(bucket.hit_rate).toFixed(1)}%`}</td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+          </div>
+        ` : "";
+        const baselineHtml = baselines.length ? `
+          <div style="margin:16px 0 12px;">
+            <strong>Baselines</strong><br>
+            <div class="meta" style="margin:4px 0 8px;">These are trivial daily rules. The trained model needs to beat them consistently to be worth using.</div>
+            <table class="holdings-table" style="width:100%; table-layout:fixed;">
+              <colgroup>
+                <col style="width:65%;">
+                <col style="width:35%;">
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>Baseline</th>
+                  <th>Hit Rate</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${baselines.map((item) => `
+                  <tr>
+                    <td>${escapeHtml(String(item?.name || ""))}</td>
+                    <td>${item?.hit_rate == null ? "n/a" : `${Number(item.hit_rate).toFixed(1)}%`}</td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+          </div>
+        ` : "";
+        const thresholdHtml = thresholdSweep.length ? `
+          <div style="margin:16px 0 12px;">
+            <strong>Threshold Tuning</strong><br>
+            <div class="meta" style="margin:4px 0 8px;">This sweep chooses alert thresholds for high-confidence signal precision. Confidence is derived from probability distance from 50%, so these thresholds overlap.</div>
+            ${recommendedThresholds ? `<div class="meta" style="margin:4px 0 8px;">Recommended starting point: P >= ${Math.round(Number(recommendedThresholds.prob_threshold || 0) * 100)}%, confidence >= ${Number(recommendedThresholds.confidence_threshold || 0).toFixed(0)}%, signals ${escapeHtml(String(recommendedThresholds.signals || 0))}, realized hit rate ${Number(recommendedThresholds.hit_rate || 0).toFixed(1)}%.</div>` : ""}
+            <table class="holdings-table" style="width:100%; table-layout:fixed;">
+              <colgroup>
+                <col style="width:25%;">
+                <col style="width:25%;">
+                <col style="width:20%;">
+                <col style="width:30%;">
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>P Threshold</th>
+                  <th>Confidence</th>
+                  <th>Signals</th>
+                  <th>Realized Hit Rate</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${thresholdSweep
+                  .filter((item) => Number(item?.signals || 0) > 0)
+                  .sort((a, b) => {
+                    const ap = Number(a?.prob_threshold || 0);
+                    const bp = Number(b?.prob_threshold || 0);
+                    if (ap !== bp) return bp - ap;
+                    return Number(b?.confidence_threshold || 0) - Number(a?.confidence_threshold || 0);
+                  })
+                  .map((item) => `
+                    <tr>
+                      <td>${Math.round(Number(item?.prob_threshold || 0) * 100)}%</td>
+                      <td>${Number(item?.confidence_threshold || 0).toFixed(0)}%</td>
+                      <td>${escapeHtml(String(item?.signals || 0))}</td>
+                      <td>${item?.hit_rate == null ? "n/a" : `${Number(item.hit_rate).toFixed(1)}%`}</td>
+                    </tr>
+                  `).join("")}
+              </tbody>
+            </table>
+          </div>
+        ` : "";
+        backtestDialogBody.innerHTML = `
+          <div class="backtest-mode-row">
+            <div class="backtest-mode-copy">
+              <div class="backtest-mode-title">${escapeHtml(activeThresholdCopy.title)}</div>
+              <div class="backtest-mode-subtitle">${escapeHtml(activeThresholdCopy.subtitle)}</div>
+            </div>
+            <div class="viewmode-toggle-wrap">
+              <span class="viewmode-label">More Signals</span>
+              <button id="backtestModeToggle" class="viewmode-toggle ${backtestAlertMode === "strongest" ? "on" : ""}" type="button" role="switch" aria-checked="${backtestAlertMode === "strongest" ? "true" : "false"}" aria-label="Toggle backtest alert mode">
+                <span class="viewmode-knob"></span>
+              </button>
+              <span class="viewmode-label">Strongest Alerts</span>
+            </div>
+          </div>
+          <div class="meta" style="margin-bottom:12px;">
+            Universe: ${escapeHtml(universeLabel)} | Data source: Twelve Data daily bars | Thresholds: P >= ${Math.round(Number(thresholds?.prob_threshold || activeThresholdCopy.prob_threshold) * 100)}%, confidence >= ${Number(thresholds?.confidence_threshold || activeThresholdCopy.confidence_threshold).toFixed(0)}%
+          </div>
+          ${modelInfo ? `<div class="meta" style="margin-bottom:12px;">Model: ${escapeHtml(String(modelInfo?.type || "unknown"))} | Objective: ${escapeHtml(String(modelInfo?.params?.objective || "n/a"))} | Split: ${escapeHtml(String(modelInfo?.params?.split || "n/a"))} | Train/Test days per ticker: ${escapeHtml(String(modelInfo?.train_days || 0))}/${escapeHtml(String(modelInfo?.test_days || 0))}</div>` : ""}
+          <div style="margin-bottom:12px;">
+            <strong>Summary</strong><br>
+            Tested ${escapeHtml(String(summary?.tickers_tested ?? 0))} tickers. Overall hit rate: ${summary?.overall_hit_rate == null ? "n/a" : `${Number(summary.overall_hit_rate).toFixed(1)}%`}. Strong up signals: ${escapeHtml(String(summary?.strong_up_signals ?? 0))}. Strong down signals: ${escapeHtml(String(summary?.strong_down_signals ?? 0))}.
+          </div>
+          <div style="overflow:auto;">
+            <table class="holdings-table" style="width:100%; table-layout:fixed;">
+              <colgroup>
+                <col style="width:12%;">
+                <col style="width:10%;">
+                <col style="width:12%;">
+                <col style="width:16%;">
+                <col style="width:16%;">
+                <col style="width:34%;">
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>Ticker</th>
+                  <th>Days</th>
+                  <th>Hit Rate</th>
+                  <th>Strong Up</th>
+                  <th>Strong Down</th>
+                  <th>Recent Signals</th>
+                </tr>
+              </thead>
+              <tbody>${rows || '<tr><td colspan="6" class="meta">No completed backtests.</td></tr>'}</tbody>
+            </table>
+          </div>
+          ${baselineHtml}
+          ${calibrationHtml}
+          ${thresholdHtml}
+          <div class="meta" style="margin-top:12px;">Backtest conclusion: ${escapeHtml(baselineSummary)} High-confidence tail reference: 90%+ bucket realized ${escapeHtml(ninetyBucketText)}.</div>
+          <div class="meta" style="margin-top:12px;">This backtest trains one pooled daily model across the selected ticker universe using chronological train/validation/test splits per ticker. The model is tuned for stronger high-confidence alerts, not peak overall hit rate. Archived news/fundamentals are omitted to avoid look-ahead bias.</div>
+          ${errorHtml}
+        `;
+        const backtestModeToggle = document.getElementById("backtestModeToggle");
+        if (backtestModeToggle) {
+          backtestModeToggle.addEventListener("click", () => {
+            backtestAlertMode = backtestAlertMode === "strongest" ? "more" : "strongest";
+            logAction("backtest_mode_toggle", { mode: backtestAlertMode });
+            if (lastBacktestTickers.length) {
+              runBacktestForVisibleLeftPanel({ reuseTickers: true });
+            } else if (lastBacktestPayload) {
+              renderBacktestDialog(lastBacktestPayload, "");
+            }
+          });
+        }
+      }
+
+      function renderScannerDialog(payload, errorMessage = "") {
+        if (!scannerDialogTitle || !scannerDialogBody) return;
+        scannerDialogTitle.textContent = "Scanner";
+        if (errorMessage) {
+          scannerDialogBody.innerHTML = `<div class="meta">${escapeHtml(errorMessage)}</div>`;
+          return;
+        }
+        const summary = payload?.summary || {};
+        const signals = Array.isArray(payload?.signals) ? payload.signals : [];
+        const errors = Array.isArray(payload?.errors) ? payload.errors : [];
+        const thresholds = payload?.thresholds || {};
+        const universeLabel = String(payload?.universe_label || summary?.universe_label || "all tickers across all left-panel categories");
+        const modelMeta = summary?.model || {};
+        const modelSource = String(modelMeta?.source || "unknown");
+        const trainedAt = formatLocalFromIso(String(modelMeta?.trained_at_utc || ""));
+        const rows = signals.map((item) => `
+          <tr>
+            <td><strong>${escapeHtml(item?.ticker || "")}</strong></td>
+            <td>${escapeHtml(String(item?.bias || ""))}</td>
+            <td>${item?.p_up_tomorrow == null ? "n/a" : `${(Number(item.p_up_tomorrow) * 100).toFixed(1)}%`}</td>
+            <td>${item?.p_down_tomorrow == null ? "n/a" : `${(Number(item.p_down_tomorrow) * 100).toFixed(1)}%`}</td>
+            <td>${item?.confidence_pct == null ? "n/a" : `${Number(item.confidence_pct).toFixed(1)}%`}</td>
+            <td>${item?.close == null ? "n/a" : Number(item.close).toFixed(2)}</td>
+            <td>${escapeHtml(formatLocalFromIso(item?.as_of || "") || "")}</td>
+          </tr>
+        `).join("");
+        const errorHtml = errors.length
+          ? `<div class="meta" style="margin-top:12px;color:#b42318;">Errors: ${escapeHtml(errors.join(" | "))}</div>`
+          : "";
+        scannerDialogBody.innerHTML = `
+          <div class="meta" style="margin-bottom:12px;">
+            Universe: ${escapeHtml(universeLabel)} | Data source: Twelve Data daily bars | Mode: More Signals | Thresholds: P >= ${Math.round(Number(thresholds?.prob_threshold || 0.80) * 100)}%, confidence >= ${Number(thresholds?.confidence_threshold || 50).toFixed(0)}%
+          </div>
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:12px;">
+            <div class="meta">
+              Model source: ${escapeHtml(modelSource)}${trainedAt ? ` | Trained: ${escapeHtml(trainedAt)}` : ""}
+            </div>
+            <button id="scannerRetrainBtn" class="btn" type="button">Retrain Model</button>
+          </div>
+          <div style="margin-bottom:12px;">
+            <strong>Summary</strong><br>
+            Considered ${escapeHtml(String(summary?.tickers_considered ?? 0))} tickers. Signals found: ${escapeHtml(String(summary?.signals_found ?? 0))}.
+          </div>
+          <div class="meta" style="margin-bottom:12px;">
+            This scanner uses the trained daily LightGBM model with the broader threshold so it can surface more candidates. It only reports names that currently trigger a live signal.
+          </div>
+          <div style="overflow:auto;">
+            <table class="holdings-table" style="width:100%; table-layout:fixed;">
+              <colgroup>
+                <col style="width:14%;">
+                <col style="width:14%;">
+                <col style="width:14%;">
+                <col style="width:14%;">
+                <col style="width:14%;">
+                <col style="width:12%;">
+                <col style="width:18%;">
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>Ticker</th>
+                  <th>Bias</th>
+                  <th>P Up</th>
+                  <th>P Down</th>
+                  <th>Confidence</th>
+                  <th>Close</th>
+                  <th>As Of</th>
+                </tr>
+              </thead>
+              <tbody>${rows || '<tr><td colspan="7" class="meta">No live signals at the current scanner threshold.</td></tr>'}</tbody>
+            </table>
+          </div>
+          ${errorHtml}
+        `;
+        const scannerRetrainBtn = document.getElementById("scannerRetrainBtn");
+        if (scannerRetrainBtn) {
+          scannerRetrainBtn.addEventListener("click", () => {
+            runScannerForLeftPanel({ forceRetrain: true, reuseTickers: true });
+          });
+        }
+      }
+
+      async function runBacktestForVisibleLeftPanel(opts = {}) {
+        const useCachedUniverse = !!opts?.reuseTickers && Array.isArray(lastBacktestTickers) && lastBacktestTickers.length;
+        const { tickers, universeLabel } = useCachedUniverse
+          ? { tickers: lastBacktestTickers.slice(), universeLabel: lastBacktestUniverseLabel || "selected backtest universe" }
+          : getBacktestSymbols();
+        if (!backtestDialog || !backtestDialogBody || !backtestDialogTitle) return;
+        if (!tickers.length) {
+          renderBacktestDialog(null, "No tickers found across the left-panel categories.");
+          backtestDialog.removeAttribute("hidden");
+          return;
+        }
+        backtestDialogTitle.textContent = "Back Test";
+        backtestDialogBody.innerHTML = `<div class="meta">Running daily walk-forward backtest for ${tickers.length} ticker(s)...</div>`;
+        backtestDialog.removeAttribute("hidden");
+        if (!backtestDialog.style.left && !backtestDialog.style.top) {
+          backtestDialog.style.left = `${Math.max(24, Math.round((window.innerWidth - Math.min(860, window.innerWidth - 40)) / 2))}px`;
+          backtestDialog.style.top = "96px";
+          backtestDialog.style.transform = "none";
+        }
+        clampFloatingDialogToViewport(backtestDialog);
+        const activeProbThreshold = backtestAlertMode === "more" ? 0.80 : 0.90;
+        const activeConfidenceThreshold = 50;
+        lastBacktestTickers = tickers.slice();
+        lastBacktestUniverseLabel = universeLabel;
+        logAction("backtest_request", {
+          tickers,
+          universe: universeLabel,
+          mode: backtestAlertMode,
+          prob_threshold: activeProbThreshold,
+          confidence_threshold: activeConfidenceThreshold,
+        });
+        try {
+          const res = await fetch("/api/backtest", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              tickers,
+              universe_label: universeLabel,
+              prob_threshold: activeProbThreshold,
+              confidence_threshold: activeConfidenceThreshold,
+            }),
+          });
+          const payload = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            renderBacktestDialog(null, payload?.error || "Backtest failed.");
+            logAction("backtest_failed", { error: payload?.error || "unknown error" });
+            return;
+          }
+          renderBacktestDialog(payload, "");
+          logAction("backtest_success", {
+            tickers: tickers.length,
+            tested: payload?.summary?.tickers_tested || 0,
+            overall_hit_rate: payload?.summary?.overall_hit_rate ?? null,
+          });
+        } catch (err) {
+          renderBacktestDialog(null, `Backtest failed: ${err?.message || err}`);
+          logAction("backtest_failed", { error: err?.message || "unknown error" });
+        }
+      }
+
+      async function runScannerForLeftPanel(opts = {}) {
+        const useCachedUniverse = !!opts?.reuseTickers && Array.isArray(lastScannerTickers) && lastScannerTickers.length;
+        const { tickers, universeLabel } = useCachedUniverse
+          ? { tickers: lastScannerTickers.slice(), universeLabel: lastScannerUniverseLabel || "all tickers across all left-panel categories" }
+          : getScannerSymbols();
+        if (!scannerDialog || !scannerDialogBody || !scannerDialogTitle) return;
+        if (!tickers.length) {
+          renderScannerDialog(null, "No tickers found across the left-panel categories.");
+          scannerDialog.removeAttribute("hidden");
+          return;
+        }
+        scannerDialogTitle.textContent = "Scanner";
+        scannerDialogBody.innerHTML = `<div class="meta">Running live scanner for ${tickers.length} ticker(s)...</div>`;
+        scannerDialog.removeAttribute("hidden");
+        if (!scannerDialog.style.left && !scannerDialog.style.top) {
+          scannerDialog.style.left = `${Math.max(24, Math.round((window.innerWidth - Math.min(860, window.innerWidth - 40)) / 2))}px`;
+          scannerDialog.style.top = "96px";
+          scannerDialog.style.transform = "none";
+        }
+        clampFloatingDialogToViewport(scannerDialog);
+        lastScannerTickers = tickers.slice();
+        lastScannerUniverseLabel = universeLabel;
+        const forceRetrain = !!opts?.forceRetrain;
+        logAction("scanner_request", {
+          tickers,
+          universe: universeLabel,
+          prob_threshold: 0.80,
+          confidence_threshold: 50.0,
+          force_retrain: forceRetrain,
+        });
+        try {
+          const res = await fetch("/api/scanner", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              tickers,
+              universe_label: universeLabel,
+              prob_threshold: 0.80,
+              confidence_threshold: 50.0,
+              force_retrain: forceRetrain,
+            }),
+          });
+          const payload = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            renderScannerDialog(null, payload?.error || "Scanner failed.");
+            logAction("scanner_failed", { error: payload?.error || "unknown error" });
+            return;
+          }
+          renderScannerDialog(payload, "");
+          logAction("scanner_success", {
+            tickers: tickers.length,
+            considered: payload?.summary?.tickers_considered || 0,
+            signals_found: payload?.summary?.signals_found || 0,
+          });
+        } catch (err) {
+          renderScannerDialog(null, `Scanner failed: ${err?.message || err}`);
+          logAction("scanner_failed", { error: err?.message || "unknown error" });
+        }
       }
 
       async function openTickerNews(symbol) {
@@ -5143,8 +5872,8 @@
               news_items: newsItems,
               trend_image: trendImage,
               regime_image: regimeImage,
-              provider: aiProviderSelect?.value || "",
-              model: aiModelSelect?.value || "",
+              provider: appConfig.llm_provider || "",
+              model: appConfig.llm_model || "",
             }),
           });
           const out = await res.json().catch(() => ({}));
@@ -5156,7 +5885,10 @@
             setExplainBodyText(msg || "Explain request failed.");
             return;
           }
-          setExplainBodyText(String(out.explanation || "").trim() || "No explanation returned.", { switchToPrediction: true });
+          setExplainBodyText(String(out.explanation || "").trim() || "No explanation returned.", {
+            switchToPrediction: true,
+            localForecast: out.local_forecast || null,
+          });
         } catch (err) {
           if (reqSeq !== explainRequestSeq) return;
           setExplainBodyText(`Explain request failed: ${err?.message || err}`);
@@ -5987,6 +6719,18 @@
               },
             },
             {
+              label: "Config",
+              onClick: () => openConfigDialog(),
+            },
+            {
+              label: "Back Test",
+              onClick: () => runBacktestForVisibleLeftPanel(),
+            },
+            {
+              label: "Scanner",
+              onClick: () => runScannerForLeftPanel(),
+            },
+            {
               label: `Auto refresh (5m): ${autoRefreshEnabled ? "On" : "Off"}`,
               onClick: () => setAutoRefreshEnabled(!autoRefreshEnabled),
             },
@@ -6116,6 +6860,7 @@
           }
           else {
             rulesHintPopover.removeAttribute("hidden");
+            explainCurrentChartWindow();
           }
         });
 
@@ -6220,6 +6965,104 @@
         });
       }
 
+      if (backtestDialog && backtestDialogHeader) {
+        if (backtestDialogCloseBtn) {
+          backtestDialogCloseBtn.addEventListener("click", () => {
+            backtestDialog.setAttribute("hidden", "");
+            backtestDragActive = false;
+            logAction("backtest_dialog_closed", { reason: "close_button" });
+          });
+        }
+
+        backtestDialogHeader.addEventListener("mousedown", (e) => {
+          if (e.button !== 0) return;
+          if (backtestDialogCloseBtn && backtestDialogCloseBtn.contains(e.target)) return;
+          const rect = backtestDialog.getBoundingClientRect();
+          backtestDragActive = true;
+          backtestDragOffsetX = e.clientX - rect.left;
+          backtestDragOffsetY = e.clientY - rect.top;
+          backtestDialog.style.left = `${Math.round(rect.left)}px`;
+          backtestDialog.style.top = `${Math.round(rect.top)}px`;
+          backtestDialog.style.right = "auto";
+          backtestDialog.style.transform = "none";
+          e.preventDefault();
+        });
+
+        document.addEventListener("mousemove", (e) => {
+          if (!backtestDragActive) return;
+          const maxLeft = Math.max(8, window.innerWidth - backtestDialog.offsetWidth - 8);
+          const maxTop = Math.max(8, window.innerHeight - backtestDialog.offsetHeight - 8);
+          const left = Math.min(maxLeft, Math.max(8, e.clientX - backtestDragOffsetX));
+          const top = Math.min(maxTop, Math.max(8, e.clientY - backtestDragOffsetY));
+          backtestDialog.style.left = `${Math.round(left)}px`;
+          backtestDialog.style.top = `${Math.round(top)}px`;
+          backtestDialog.style.right = "auto";
+          backtestDialog.style.transform = "none";
+        });
+
+        document.addEventListener("mouseup", () => {
+          if (!backtestDragActive) return;
+          backtestDragActive = false;
+          logAction("backtest_dialog_drag_end", {
+            left: backtestDialog.style.left || "",
+            top: backtestDialog.style.top || "",
+          });
+        });
+
+        window.addEventListener("resize", () => {
+          clampFloatingDialogToViewport(backtestDialog);
+        });
+      }
+
+      if (scannerDialog && scannerDialogHeader) {
+        if (scannerDialogCloseBtn) {
+          scannerDialogCloseBtn.addEventListener("click", () => {
+            scannerDialog.setAttribute("hidden", "");
+            scannerDragActive = false;
+            logAction("scanner_dialog_closed", { reason: "close_button" });
+          });
+        }
+
+        scannerDialogHeader.addEventListener("mousedown", (e) => {
+          if (e.button !== 0) return;
+          if (scannerDialogCloseBtn && scannerDialogCloseBtn.contains(e.target)) return;
+          const rect = scannerDialog.getBoundingClientRect();
+          scannerDragActive = true;
+          scannerDragOffsetX = e.clientX - rect.left;
+          scannerDragOffsetY = e.clientY - rect.top;
+          scannerDialog.style.left = `${Math.round(rect.left)}px`;
+          scannerDialog.style.top = `${Math.round(rect.top)}px`;
+          scannerDialog.style.right = "auto";
+          scannerDialog.style.transform = "none";
+          e.preventDefault();
+        });
+
+        document.addEventListener("mousemove", (e) => {
+          if (!scannerDragActive) return;
+          const maxLeft = Math.max(8, window.innerWidth - scannerDialog.offsetWidth - 8);
+          const maxTop = Math.max(8, window.innerHeight - scannerDialog.offsetHeight - 8);
+          const left = Math.min(maxLeft, Math.max(8, e.clientX - scannerDragOffsetX));
+          const top = Math.min(maxTop, Math.max(8, e.clientY - scannerDragOffsetY));
+          scannerDialog.style.left = `${Math.round(left)}px`;
+          scannerDialog.style.top = `${Math.round(top)}px`;
+          scannerDialog.style.right = "auto";
+          scannerDialog.style.transform = "none";
+        });
+
+        document.addEventListener("mouseup", () => {
+          if (!scannerDragActive) return;
+          scannerDragActive = false;
+          logAction("scanner_dialog_drag_end", {
+            left: scannerDialog.style.left || "",
+            top: scannerDialog.style.top || "",
+          });
+        });
+
+        window.addEventListener("resize", () => {
+          clampFloatingDialogToViewport(scannerDialog);
+        });
+      }
+
       document.addEventListener("keydown", (e) => {
         if (e.key !== "Escape") return;
         if (rulesHintPopover && !rulesHintPopover.hasAttribute("hidden")) {
@@ -6231,6 +7074,16 @@
           newsDragActive = false;
           activeNewsTicker = "";
           logAction("ticker_news_dialog_closed", { reason: "escape" });
+        }
+        if (backtestDialog && !backtestDialog.hasAttribute("hidden")) {
+          backtestDialog.setAttribute("hidden", "");
+          backtestDragActive = false;
+          logAction("backtest_dialog_closed", { reason: "escape" });
+        }
+        if (scannerDialog && !scannerDialog.hasAttribute("hidden")) {
+          scannerDialog.setAttribute("hidden", "");
+          scannerDragActive = false;
+          logAction("scanner_dialog_closed", { reason: "escape" });
         }
       });
 

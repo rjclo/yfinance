@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import logging
@@ -61,6 +62,7 @@ RANGE_MAP: Dict[str, Tuple[str, str]] = {
 }
 
 BASE_DIR = Path(__file__).resolve().parent
+DOTENV_PATH = BASE_DIR / ".env"
 PORTFOLIO_DIR = BASE_DIR / "data" / "imported_portfolios"
 PORTFOLIO_FILES_DIR = PORTFOLIO_DIR / "files"
 PORTFOLIO_CONFIG_PATH = PORTFOLIO_DIR / "portfolios.json"
@@ -79,6 +81,8 @@ CACHE_DIR = BASE_DIR / "data" / "cache"
 CACHE_DB_PATH = CACHE_DIR / "market_data.db"
 CACHE_MAX_BYTES = 50 * 1024 * 1024  # 50 MB
 CACHE_MAX_AGE_SEC = 7 * 24 * 3600   # 7 days
+MODEL_DIR = BASE_DIR / "data" / "models"
+DAILY_SCANNER_MODEL_VERSION = "lgbm_daily_v2"
 
 RSI_MONITOR_INTERVAL_SEC = int(os.getenv("RSI_MONITOR_INTERVAL_SEC", "600"))
 RSI_PERIOD = 14
@@ -99,6 +103,133 @@ _history_cache_lock = threading.Lock()
 _history_cache: dict[tuple[str, str, str, bool, str], dict] = {}
 _news_cache_lock = threading.Lock()
 _news_cache: dict[str, dict] = {}
+_twelve_meta_cache_lock = threading.Lock()
+_twelve_meta_cache: dict[tuple[str, str], dict] = {}
+
+_CONFIG_ENV_KEYS = (
+    "TWELVE_DATA_API_KEY",
+    "FINNHUB_API_KEY",
+    "OPENAI_API_KEY",
+    "GEMINI_API_KEY",
+    "GROQ_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "CHART_AI_PROVIDER",
+    "CHART_AI_MODEL",
+)
+
+
+def _parse_dotenv_text(text: str) -> dict[str, str]:
+    parsed: dict[str, str] = {}
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            continue
+        value = value.strip()
+        if len(value) >= 2 and ((value[0] == value[-1] == '"') or (value[0] == value[-1] == "'")):
+            value = value[1:-1]
+        parsed[key] = value
+    return parsed
+
+
+def _read_dotenv_values() -> dict[str, str]:
+    try:
+        if DOTENV_PATH.exists():
+            return _parse_dotenv_text(DOTENV_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+
+def _format_dotenv_value(value: str) -> str:
+    text = str(value or "")
+    if re.fullmatch(r"[A-Za-z0-9_./:@+-]+", text):
+        return text
+    return json.dumps(text, ensure_ascii=False)
+
+
+def _write_dotenv_values(values: dict[str, str]) -> None:
+    existing_lines: list[str] = []
+    if DOTENV_PATH.exists():
+        try:
+            existing_lines = DOTENV_PATH.read_text(encoding="utf-8").splitlines()
+        except Exception:
+            existing_lines = []
+
+    managed = {k: str(v).strip() for k, v in (values or {}).items() if k in _CONFIG_ENV_KEYS and str(v).strip()}
+    seen: set[str] = set()
+    output_lines: list[str] = []
+
+    for raw_line in existing_lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in raw_line:
+            output_lines.append(raw_line)
+            continue
+        key, _ = raw_line.split("=", 1)
+        key = key.strip()
+        if key not in _CONFIG_ENV_KEYS:
+            output_lines.append(raw_line)
+            continue
+        seen.add(key)
+        if key in managed:
+            output_lines.append(f"{key}={_format_dotenv_value(managed[key])}")
+
+    for key in _CONFIG_ENV_KEYS:
+        if key in managed and key not in seen:
+            output_lines.append(f"{key}={_format_dotenv_value(managed[key])}")
+
+    DOTENV_PATH.write_text(("\n".join(output_lines).rstrip() + "\n") if output_lines else "", encoding="utf-8")
+
+
+def _sync_dotenv_from_process_env() -> None:
+    file_values = _read_dotenv_values()
+    merged = dict(file_values)
+    changed = False
+    for key in _CONFIG_ENV_KEYS:
+        env_val = os.environ.get(key)
+        if env_val is None:
+            continue
+        env_val = env_val.strip()
+        if env_val == (file_values.get(key) or "").strip():
+            continue
+        changed = True
+        if env_val:
+            merged[key] = env_val
+        else:
+            merged.pop(key, None)
+    if changed:
+        try:
+            _write_dotenv_values(merged)
+        except Exception:
+            pass
+
+
+def _get_config_value(key: str, default: str = "") -> str:
+    env_val = os.environ.get(key, "").strip()
+    if env_val:
+        return env_val
+    file_val = (_read_dotenv_values().get(key) or "").strip()
+    return file_val or default
+
+
+def _set_config_values(values: dict[str, str]) -> None:
+    current = _read_dotenv_values()
+    updated = dict(current)
+    for key in _CONFIG_ENV_KEYS:
+        raw = str(values.get(key, "") or "").strip()
+        if raw:
+            updated[key] = raw
+            os.environ[key] = raw
+        else:
+            updated.pop(key, None)
+            os.environ.pop(key, None)
+    _write_dotenv_values(updated)
+
+
+_sync_dotenv_from_process_env()
 
 
 class _DiskCache:
@@ -256,12 +387,1409 @@ def _extract_response_text(payload: dict) -> str:
     return "\n\n".join(chunks).strip()
 
 
+def _fetch_twelve_json_cached(endpoint: str, symbol: str, params: dict | None = None, ttl_sec: int = 3600) -> dict:
+    ticker = _sanitize_ticker(symbol)
+    if not ticker:
+        return {}
+    api_key = _get_config_value("TWELVE_DATA_API_KEY")
+    if not api_key:
+        return {}
+    cache_key = (endpoint, ticker)
+    now = time.time()
+    with _twelve_meta_cache_lock:
+        hit = _twelve_meta_cache.get(cache_key)
+        if hit and (now - float(hit.get("at", 0.0))) < ttl_sec:
+            payload = hit.get("payload")
+            if isinstance(payload, dict):
+                return dict(payload)
+    query = {"symbol": ticker, "apikey": api_key}
+    if isinstance(params, dict):
+        for key, value in params.items():
+            if value is None:
+                continue
+            query[str(key)] = str(value)
+    url = f"https://api.twelvedata.com/{endpoint}?{urllib.parse.urlencode(query)}"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; finlab-fundamentals/1.0)",
+            "Accept": "application/json",
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = resp.read().decode("utf-8")
+    except Exception:
+        return {}
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    with _twelve_meta_cache_lock:
+        _twelve_meta_cache[cache_key] = {"at": now, "payload": dict(payload)}
+    return payload
+
+
+def _safe_float(value) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
+def _days_until_date(date_text: str) -> int | None:
+    try:
+        target = datetime.fromisoformat(str(date_text)).date()
+        today = datetime.now(timezone.utc).date()
+        return (target - today).days
+    except Exception:
+        return None
+
+
+def _build_tomorrow_up_context(ticker: str) -> dict:
+    symbol = _sanitize_ticker(ticker)
+    if not symbol:
+        return {}
+
+    earnings_payload = _fetch_twelve_json_cached("earnings", symbol, ttl_sec=6 * 3600)
+    stats_payload = _fetch_twelve_json_cached("statistics", symbol, ttl_sec=12 * 3600)
+    income_payload = _fetch_twelve_json_cached("income_statement", symbol, {"period": "Quarterly"}, ttl_sec=12 * 3600)
+
+    earnings_rows = earnings_payload.get("earnings") if isinstance(earnings_payload.get("earnings"), list) else []
+    next_earnings = None
+    last_report = None
+    today = datetime.now(timezone.utc).date()
+    for row in earnings_rows:
+        if not isinstance(row, dict):
+            continue
+        dt_text = str(row.get("date") or "").strip()
+        try:
+            dt = datetime.fromisoformat(dt_text).date()
+        except Exception:
+            continue
+        if dt >= today and next_earnings is None:
+            next_earnings = row
+        if dt <= today:
+            last_report = row
+            break
+
+    stats = stats_payload.get("statistics") if isinstance(stats_payload.get("statistics"), dict) else {}
+    valuation = stats.get("valuations_metrics") if isinstance(stats.get("valuations_metrics"), dict) else {}
+    financials = stats.get("financials") if isinstance(stats.get("financials"), dict) else {}
+
+    income_rows = income_payload.get("income_statement") if isinstance(income_payload.get("income_statement"), list) else []
+    revenue_growth_qoq = None
+    revenue_growth_yoy = None
+    if len(income_rows) >= 2 and isinstance(income_rows[0], dict) and isinstance(income_rows[1], dict):
+        latest_sales = _safe_float(income_rows[0].get("sales"))
+        prev_sales = _safe_float(income_rows[1].get("sales"))
+        if latest_sales and prev_sales:
+            revenue_growth_qoq = ((latest_sales / prev_sales) - 1.0) * 100.0
+    if len(income_rows) >= 5 and isinstance(income_rows[0], dict) and isinstance(income_rows[4], dict):
+        latest_sales = _safe_float(income_rows[0].get("sales"))
+        yoy_sales = _safe_float(income_rows[4].get("sales"))
+        if latest_sales and yoy_sales:
+            revenue_growth_yoy = ((latest_sales / yoy_sales) - 1.0) * 100.0
+
+    return {
+        "next_earnings_date": str((next_earnings or {}).get("date") or ""),
+        "days_to_next_earnings": _days_until_date((next_earnings or {}).get("date") or ""),
+        "last_earnings_date": str((last_report or {}).get("date") or ""),
+        "last_eps_estimate": _safe_float((last_report or {}).get("eps_estimate")),
+        "last_eps_actual": _safe_float((last_report or {}).get("eps_actual")),
+        "last_eps_surprise_pct": _safe_float((last_report or {}).get("surprise_prc")),
+        "market_cap": _safe_float(valuation.get("market_capitalization")),
+        "trailing_pe": _safe_float(valuation.get("trailing_pe")),
+        "forward_pe": _safe_float(valuation.get("forward_pe")),
+        "peg_ratio": _safe_float(valuation.get("peg_ratio")),
+        "beta": _safe_float(financials.get("beta")),
+        "profit_margin": _safe_float(financials.get("profit_margins")),
+        "revenue_growth_qoq_pct": revenue_growth_qoq,
+        "revenue_growth_yoy_pct": revenue_growth_yoy,
+    }
+
+
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
+def _sigmoid(value: float) -> float:
+    return 1.0 / (1.0 + math.exp(-value))
+
+
+def _float_or_none(value) -> float | None:
+    parsed = _safe_float(value)
+    return parsed if parsed is not None and math.isfinite(parsed) else None
+
+
+def _add_forecast_driver(drivers: list[dict], label: str, points: float, detail: str) -> float:
+    if not points:
+        return 0.0
+    drivers.append(
+        {
+            "label": label,
+            "points": round(points, 3),
+            "direction": "bullish" if points > 0 else "bearish",
+            "detail": detail,
+        }
+    )
+    return points
+
+
+def _build_local_tomorrow_forecast(metrics: dict, tomorrow_up_context: dict) -> dict:
+    summary = metrics.get("summary") if isinstance(metrics.get("summary"), dict) else {}
+    indicators = metrics.get("indicators") if isinstance(metrics.get("indicators"), dict) else {}
+    drivers: list[dict] = []
+    risks: list[str] = []
+    score = 0.0
+    bullish_votes = 0
+    bearish_votes = 0
+
+    start_price = _float_or_none(summary.get("start"))
+    end_price = _float_or_none(summary.get("end"))
+    change_pct = _float_or_none(summary.get("change_pct"))
+    rsi14 = _float_or_none(indicators.get("rsi14"))
+    macd = _float_or_none(indicators.get("macd"))
+    macd_signal = _float_or_none(indicators.get("macd_signal"))
+    macd_hist = _float_or_none(indicators.get("macd_hist"))
+    ma50 = _float_or_none(indicators.get("ma50"))
+    ma200 = _float_or_none(indicators.get("ma200"))
+    adx14 = _float_or_none(indicators.get("adx14"))
+    atr_pct_14 = _float_or_none(indicators.get("atr_pct_14"))
+    rvol20 = _float_or_none(indicators.get("rvol20"))
+    regime_score = _float_or_none(indicators.get("regime_score"))
+    regime_confidence = _float_or_none(indicators.get("regime_confidence"))
+
+    if change_pct is not None:
+        if change_pct >= 1.5:
+            score += _add_forecast_driver(drivers, "Visible-window momentum", 0.55, f"Price gained {change_pct:.2f}% across the visible window.")
+            bullish_votes += 1
+        elif change_pct >= 0.4:
+            score += _add_forecast_driver(drivers, "Visible-window momentum", 0.3, f"Price gained {change_pct:.2f}% across the visible window.")
+            bullish_votes += 1
+        elif change_pct <= -1.5:
+            score += _add_forecast_driver(drivers, "Visible-window momentum", -0.55, f"Price fell {change_pct:.2f}% across the visible window.")
+            bearish_votes += 1
+        elif change_pct <= -0.4:
+            score += _add_forecast_driver(drivers, "Visible-window momentum", -0.3, f"Price fell {change_pct:.2f}% across the visible window.")
+            bearish_votes += 1
+
+    if rsi14 is not None:
+        if rsi14 < 28:
+            score += _add_forecast_driver(drivers, "RSI mean-reversion", 0.45, f"RSI(14) is oversold at {rsi14:.1f}.")
+            bullish_votes += 1
+        elif rsi14 < 35:
+            score += _add_forecast_driver(drivers, "RSI pressure", -0.2, f"RSI(14) is weak at {rsi14:.1f} but not deeply washed out.")
+            bearish_votes += 1
+        elif rsi14 <= 45:
+            score += _add_forecast_driver(drivers, "RSI pressure", -0.1, f"RSI(14) remains below midline at {rsi14:.1f}.")
+            bearish_votes += 1
+        elif rsi14 < 55:
+            pass
+        elif rsi14 <= 68:
+            score += _add_forecast_driver(drivers, "RSI support", 0.18, f"RSI(14) is constructive at {rsi14:.1f}.")
+            bullish_votes += 1
+        elif rsi14 > 72:
+            score += _add_forecast_driver(drivers, "RSI stretch", -0.18, f"RSI(14) is extended at {rsi14:.1f}.")
+            bearish_votes += 1
+
+    if macd_hist is not None:
+        score += _add_forecast_driver(
+            drivers,
+            "MACD histogram",
+            0.35 if macd_hist > 0 else -0.35 if macd_hist < 0 else 0.0,
+            f"MACD histogram is {'positive' if macd_hist > 0 else 'negative' if macd_hist < 0 else 'flat'} ({macd_hist:.4f}).",
+        )
+        if macd_hist > 0:
+            bullish_votes += 1
+        elif macd_hist < 0:
+            bearish_votes += 1
+    if macd is not None and macd_signal is not None:
+        if macd > macd_signal:
+            score += _add_forecast_driver(drivers, "MACD crossover", 0.25, f"MACD ({macd:.4f}) is above signal ({macd_signal:.4f}).")
+            bullish_votes += 1
+        elif macd < macd_signal:
+            score += _add_forecast_driver(drivers, "MACD crossover", -0.25, f"MACD ({macd:.4f}) is below signal ({macd_signal:.4f}).")
+            bearish_votes += 1
+
+    if end_price is not None and ma50 is not None:
+        score += _add_forecast_driver(
+            drivers,
+            "Price vs 50DMA",
+            0.25 if end_price > ma50 else -0.25,
+            f"Price {end_price:.2f} is {'above' if end_price > ma50 else 'below'} the 50DMA ({ma50:.2f}).",
+        )
+        if end_price > ma50:
+            bullish_votes += 1
+        else:
+            bearish_votes += 1
+    if end_price is not None and ma200 is not None:
+        score += _add_forecast_driver(
+            drivers,
+            "Price vs 200DMA",
+            0.35 if end_price > ma200 else -0.35,
+            f"Price {end_price:.2f} is {'above' if end_price > ma200 else 'below'} the 200DMA ({ma200:.2f}).",
+        )
+        if end_price > ma200:
+            bullish_votes += 1
+        else:
+            bearish_votes += 1
+
+    if regime_score is not None:
+        regime_conf_factor = _clamp((regime_confidence or 50.0) / 100.0, 0.2, 1.0)
+        regime_points = _clamp(regime_score, -4.0, 4.0) / 4.0 * 0.65 * regime_conf_factor
+        if abs(regime_points) >= 0.05:
+            score += _add_forecast_driver(
+                drivers,
+                "Regime state",
+                regime_points,
+                f"Regime score {regime_score:.0f} with confidence {(regime_confidence or 50.0):.0f}%.",
+            )
+            if regime_points > 0:
+                bullish_votes += 1
+            elif regime_points < 0:
+                bearish_votes += 1
+
+    if adx14 is not None and adx14 >= 25 and regime_score is not None and regime_score != 0:
+        trend_follow_points = 0.12 if regime_score > 0 else -0.12
+        score += _add_forecast_driver(
+            drivers,
+            "ADX trend strength",
+            trend_follow_points,
+            f"ADX(14) at {adx14:.1f} says the prevailing trend has strength.",
+        )
+        if trend_follow_points > 0:
+            bullish_votes += 1
+        elif trend_follow_points < 0:
+            bearish_votes += 1
+
+    if rvol20 is not None and change_pct is not None and abs(change_pct) >= 0.4:
+        if rvol20 >= 1.2:
+            volume_points = 0.10 if change_pct > 0 else -0.10
+            score += _add_forecast_driver(
+                drivers,
+                "Relative volume confirmation",
+                volume_points,
+                f"RVOL {rvol20:.2f} is confirming the visible move.",
+            )
+            if volume_points > 0:
+                bullish_votes += 1
+            elif volume_points < 0:
+                bearish_votes += 1
+        elif rvol20 < 0.8:
+            risks.append(f"RVOL {rvol20:.2f} is light, so the latest move has weaker participation.")
+
+    days_to_next_earnings = _float_or_none(tomorrow_up_context.get("days_to_next_earnings"))
+    last_eps_surprise_pct = _float_or_none(tomorrow_up_context.get("last_eps_surprise_pct"))
+    beta = _float_or_none(tomorrow_up_context.get("beta"))
+    revenue_growth_qoq = _float_or_none(tomorrow_up_context.get("revenue_growth_qoq_pct"))
+    revenue_growth_yoy = _float_or_none(tomorrow_up_context.get("revenue_growth_yoy_pct"))
+    profit_margin = _float_or_none(tomorrow_up_context.get("profit_margin"))
+
+    if days_to_next_earnings is not None and days_to_next_earnings <= 2:
+        risks.append(f"Next earnings are {int(days_to_next_earnings)} day(s) away; event risk can dominate technicals.")
+    if last_eps_surprise_pct is not None:
+        if last_eps_surprise_pct >= 5:
+            score += _add_forecast_driver(drivers, "Last EPS surprise", 0.25, f"Last EPS surprise was +{last_eps_surprise_pct:.2f}%.")
+            bullish_votes += 1
+        elif last_eps_surprise_pct <= -5:
+            score += _add_forecast_driver(drivers, "Last EPS surprise", -0.25, f"Last EPS surprise was {last_eps_surprise_pct:.2f}%.")
+            bearish_votes += 1
+    if revenue_growth_qoq is not None and abs(revenue_growth_qoq) >= 3:
+        score += _add_forecast_driver(
+            drivers,
+            "Quarterly revenue trend",
+            0.15 if revenue_growth_qoq > 0 else -0.15,
+            f"Quarterly revenue changed {revenue_growth_qoq:.2f}% QoQ.",
+        )
+        if revenue_growth_qoq > 0:
+            bullish_votes += 1
+        else:
+            bearish_votes += 1
+    if revenue_growth_yoy is not None and abs(revenue_growth_yoy) >= 5:
+        score += _add_forecast_driver(
+            drivers,
+            "Yearly revenue trend",
+            0.2 if revenue_growth_yoy > 0 else -0.2,
+            f"Quarterly revenue changed {revenue_growth_yoy:.2f}% YoY.",
+        )
+        if revenue_growth_yoy > 0:
+            bullish_votes += 1
+        else:
+            bearish_votes += 1
+    if profit_margin is not None:
+        if profit_margin >= 0.15:
+            score += _add_forecast_driver(drivers, "Profit margin quality", 0.1, f"Profit margin is healthy at {profit_margin:.2f}.")
+            bullish_votes += 1
+        elif profit_margin < 0:
+            score += _add_forecast_driver(drivers, "Profit margin quality", -0.1, f"Profit margin is negative at {profit_margin:.2f}.")
+            bearish_votes += 1
+
+    score = _clamp(score, -3.5, 3.5)
+    agreement = abs(bullish_votes - bearish_votes)
+    direction_votes = max(bullish_votes, bearish_votes)
+    if agreement < 2:
+        score *= 0.55
+        risks.append("Signal alignment is mixed; multiple drivers are not agreeing cleanly.")
+    elif direction_votes < 4:
+        score *= 0.72
+    p_up = _sigmoid(score * 0.62)
+    p_down = 1.0 - p_up
+
+    confidence_penalty = 0.0
+    if atr_pct_14 is not None:
+        confidence_penalty += min(12.0, max(0.0, atr_pct_14) * 2.5)
+    if days_to_next_earnings is not None and days_to_next_earnings <= 2:
+        confidence_penalty += 15.0
+    if beta is not None and beta >= 1.5:
+        confidence_penalty += 8.0
+    if rvol20 is not None and rvol20 < 0.8:
+        confidence_penalty += 5.0
+
+    alignment_count = sum(1 for d in drivers if abs(float(d.get("points") or 0.0)) >= 0.15)
+    confidence_pct = 42.0 + (abs(score) * 11.0) + min(14.0, agreement * 3.5) + min(10.0, direction_votes * 1.5) - confidence_penalty
+    if 0.44 <= p_up <= 0.56:
+        confidence_pct = min(confidence_pct, 58.0)
+    confidence_pct = _clamp(confidence_pct, 20.0, 90.0)
+
+    if p_up >= 0.58:
+        bias = "bullish"
+    elif p_up <= 0.42:
+        bias = "bearish"
+    else:
+        bias = "neutral"
+
+    top_drivers = sorted(drivers, key=lambda item: abs(float(item.get("points") or 0.0)), reverse=True)[:6]
+    return {
+        "horizon": "next trading day",
+        "bias": bias,
+        "score": round(score, 3),
+        "p_up_tomorrow": round(p_up, 4),
+        "p_down_tomorrow": round(p_down, 4),
+        "confidence_pct": round(confidence_pct, 1),
+        "top_drivers": top_drivers,
+        "risks": risks[:4],
+        "inputs_used": {
+            "start_price": start_price,
+            "end_price": end_price,
+            "change_pct": change_pct,
+            "rsi14": rsi14,
+            "macd": macd,
+            "macd_signal": macd_signal,
+            "macd_hist": macd_hist,
+            "ma50": ma50,
+            "ma200": ma200,
+            "adx14": adx14,
+            "atr_pct_14": atr_pct_14,
+            "rvol20": rvol20,
+            "regime_score": regime_score,
+            "regime_confidence": regime_confidence,
+            "days_to_next_earnings": days_to_next_earnings,
+            "last_eps_surprise_pct": last_eps_surprise_pct,
+            "revenue_growth_qoq_pct": revenue_growth_qoq,
+            "revenue_growth_yoy_pct": revenue_growth_yoy,
+            "profit_margin": profit_margin,
+            "beta": beta,
+        },
+    }
+
+
+def _compute_rsi_series_pd(close: pd.Series, period: int = 14) -> pd.Series:
+    delta = close.diff()
+    gain = delta.clip(lower=0.0)
+    loss = (-delta).clip(lower=0.0)
+    avg_gain = gain.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    avg_loss = loss.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    rs = avg_gain / avg_loss.replace(0.0, pd.NA)
+    rsi = 100.0 - (100.0 / (1.0 + rs))
+    rsi = rsi.astype(float)
+    rsi = rsi.mask((avg_loss == 0) & (avg_gain > 0), 100.0)
+    rsi = rsi.mask((avg_loss == 0) & (avg_gain == 0), 50.0)
+    return rsi
+
+
+def _compute_macd_pd(close: pd.Series) -> tuple[pd.Series, pd.Series, pd.Series]:
+    ema12 = close.ewm(span=12, adjust=False, min_periods=12).mean()
+    ema26 = close.ewm(span=26, adjust=False, min_periods=26).mean()
+    macd = ema12 - ema26
+    signal = macd.ewm(span=9, adjust=False, min_periods=9).mean()
+    hist = macd - signal
+    return macd, signal, hist
+
+
+def _compute_atr_adx_pd(df: pd.DataFrame, period: int = 14) -> tuple[pd.Series, pd.Series]:
+    high = pd.to_numeric(df["High"], errors="coerce")
+    low = pd.to_numeric(df["Low"], errors="coerce")
+    close = pd.to_numeric(df["Close"], errors="coerce")
+
+    tr = pd.concat(
+        [
+            high - low,
+            (high - close.shift(1)).abs(),
+            (low - close.shift(1)).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+    atr = tr.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+
+    up_move = high.diff()
+    down_move = -low.diff()
+    plus_dm = up_move.where((up_move > down_move) & (up_move > 0.0), 0.0)
+    minus_dm = down_move.where((down_move > up_move) & (down_move > 0.0), 0.0)
+
+    plus_di = 100.0 * plus_dm.ewm(alpha=1 / period, adjust=False, min_periods=period).mean() / atr.replace(0.0, pd.NA)
+    minus_di = 100.0 * minus_dm.ewm(alpha=1 / period, adjust=False, min_periods=period).mean() / atr.replace(0.0, pd.NA)
+    dx = 100.0 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0.0, pd.NA)
+    adx = dx.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    return atr, adx
+
+
+def _compute_daily_candlestick_flags(work: pd.DataFrame) -> pd.DataFrame:
+    close = pd.to_numeric(work["Close"], errors="coerce")
+    open_ = pd.to_numeric(work["Open"], errors="coerce")
+    high = pd.to_numeric(work["High"], errors="coerce")
+    low = pd.to_numeric(work["Low"], errors="coerce")
+
+    body = (close - open_).abs()
+    candle_range = (high - low).replace(0.0, pd.NA)
+    upper_wick = high - pd.concat([open_, close], axis=1).max(axis=1)
+    lower_wick = pd.concat([open_, close], axis=1).min(axis=1) - low
+
+    bullish = close > open_
+    bearish = close < open_
+    small_body = (body / candle_range) <= 0.30
+    long_lower = lower_wick >= (body * 2.0)
+    long_upper = upper_wick >= (body * 2.0)
+    tiny_upper = upper_wick <= (body * 0.35)
+    tiny_lower = lower_wick <= (body * 0.35)
+    doji_like = (body / candle_range) <= 0.12
+    near_high = (high - pd.concat([open_, close], axis=1).max(axis=1)) / candle_range <= 0.20
+    near_low = (pd.concat([open_, close], axis=1).min(axis=1) - low) / candle_range <= 0.20
+
+    ret3 = close.pct_change(3)
+    prior_down = ret3.shift(1) <= -0.01
+    prior_up = ret3.shift(1) >= 0.01
+
+    prev_open = open_.shift(1)
+    prev_close = close.shift(1)
+    prev_body = body.shift(1)
+    prev_bull = bullish.shift(1).fillna(False)
+    prev_bear = bearish.shift(1).fillna(False)
+
+    hammer = small_body & long_lower & tiny_upper & prior_down
+    hanging_man = small_body & long_lower & tiny_upper & prior_up
+    shooting_star = small_body & long_upper & tiny_lower & prior_up
+
+    bullish_engulfing = (
+        prev_bear
+        & bullish
+        & (open_ <= prev_close)
+        & (close >= prev_open)
+        & (body >= prev_body * 1.05)
+        & prior_down
+    )
+    bearish_engulfing = (
+        prev_bull
+        & bearish
+        & (open_ >= prev_close)
+        & (close <= prev_open)
+        & (body >= prev_body * 1.05)
+        & prior_up
+    )
+
+    prev2_close = close.shift(2)
+    prev2_open = open_.shift(2)
+    prev2_bear = (prev2_close < prev2_open).fillna(False)
+    prev2_bull = (prev2_close > prev2_open).fillna(False)
+    prev1_body_small = (prev_body / candle_range.shift(1).replace(0.0, pd.NA)) <= 0.35
+
+    morning_star = (
+        prev2_bear
+        & prev1_body_small.fillna(False)
+        & bullish
+        & prior_down
+        & (close >= ((prev2_open + prev2_close) / 2.0))
+    )
+    evening_star = (
+        prev2_bull
+        & prev1_body_small.fillna(False)
+        & bearish
+        & prior_up
+        & (close <= ((prev2_open + prev2_close) / 2.0))
+    )
+
+    dragonfly_doji = doji_like & (lower_wick / candle_range >= 0.55) & (upper_wick / candle_range <= 0.10) & prior_down
+    gravestone_doji = doji_like & (upper_wick / candle_range >= 0.55) & (lower_wick / candle_range <= 0.10) & prior_up
+    doji_rejection = dragonfly_doji | gravestone_doji
+
+    out = pd.DataFrame(index=work.index)
+    out["pattern_bullish_engulfing"] = bullish_engulfing.astype(int)
+    out["pattern_bearish_engulfing"] = bearish_engulfing.astype(int)
+    out["pattern_hammer"] = hammer.astype(int)
+    out["pattern_hanging_man"] = hanging_man.astype(int)
+    out["pattern_shooting_star"] = shooting_star.astype(int)
+    out["pattern_morning_star"] = morning_star.astype(int)
+    out["pattern_evening_star"] = evening_star.astype(int)
+    out["pattern_doji_rejection"] = doji_rejection.astype(int)
+    out["pattern_bullish_count"] = (
+        out["pattern_bullish_engulfing"]
+        + out["pattern_hammer"]
+        + out["pattern_morning_star"]
+        + dragonfly_doji.astype(int)
+    )
+    out["pattern_bearish_count"] = (
+        out["pattern_bearish_engulfing"]
+        + out["pattern_hanging_man"]
+        + out["pattern_shooting_star"]
+        + out["pattern_evening_star"]
+        + gravestone_doji.astype(int)
+    )
+    return out
+
+
+def _build_regime_score_from_row(row: pd.Series) -> tuple[float | None, float | None]:
+    close = _float_or_none(row.get("Close"))
+    ma50 = _float_or_none(row.get("ma50"))
+    ma200 = _float_or_none(row.get("ma200"))
+    macd_hist = _float_or_none(row.get("macd_hist"))
+    rsi14 = _float_or_none(row.get("rsi14"))
+    adx14 = _float_or_none(row.get("adx14"))
+    if close is None or ma50 is None or ma200 is None:
+        return None, None
+
+    score = 0.0
+    score += 2.0 if close > ma200 else -2.0
+    score += 1.0 if close > ma50 else -1.0
+    if macd_hist is not None:
+        score += 1.0 if macd_hist > 0 else -1.0 if macd_hist < 0 else 0.0
+    if rsi14 is not None:
+        if rsi14 >= 58:
+            score += 1.0
+        elif rsi14 <= 42:
+            score -= 1.0
+
+    score = _clamp(score, -4.0, 4.0)
+    trend_strength = 0.0 if adx14 is None else _clamp((adx14 - 12.0) / 18.0, 0.0, 1.0)
+    confidence = _clamp(45.0 + (abs(score) * 10.0) + (trend_strength * 25.0), 20.0, 100.0)
+    return round(score, 0), round(confidence, 0)
+
+
+def _build_daily_backtest_frame(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame()
+
+    work = df.copy()
+    work["date"] = pd.to_datetime(work["date"], utc=True, errors="coerce")
+    for col in ("Open", "High", "Low", "Close", "Volume"):
+        work[col] = pd.to_numeric(work[col], errors="coerce")
+    work = work.dropna(subset=["date", "Open", "High", "Low", "Close"]).sort_values("date").reset_index(drop=True)
+    if work.empty:
+        return pd.DataFrame()
+
+    work["rsi14"] = _compute_rsi_series_pd(work["Close"], 14)
+    work["macd"], work["macd_signal"], work["macd_hist"] = _compute_macd_pd(work["Close"])
+    work["ma50"] = work["Close"].rolling(window=50, min_periods=50).mean()
+    work["ma200"] = work["Close"].rolling(window=200, min_periods=200).mean()
+    work["ma20"] = work["Close"].rolling(window=20, min_periods=20).mean()
+    atr, adx = _compute_atr_adx_pd(work, 14)
+    work["atr14"] = atr
+    work["adx14"] = adx
+    work["atr_pct_14"] = (work["atr14"] / work["Close"]) * 100.0
+    work["rvol20"] = work["Volume"] / work["Volume"].rolling(window=20, min_periods=20).mean()
+    work["ret1"] = work["Close"].pct_change(1)
+    work["ret3"] = work["Close"].pct_change(3)
+    work["ret5"] = work["Close"].pct_change(5)
+    work["ret10"] = work["Close"].pct_change(10)
+    work["volume_ret1"] = work["Volume"].pct_change(1)
+    work["price_vs_ma50"] = (work["Close"] / work["ma50"]) - 1.0
+    work["price_vs_ma200"] = (work["Close"] / work["ma200"]) - 1.0
+    work["dist_ma_20"] = (work["Close"] / work["ma20"]) - 1.0
+    work["ma50_slope_5"] = work["ma50"].pct_change(5)
+    work["ma200_slope_10"] = work["ma200"].pct_change(10)
+    work["volatility_10"] = work["ret1"].rolling(window=10, min_periods=10).std()
+    work["volatility_20"] = work["ret1"].rolling(window=20, min_periods=20).std()
+    work["gap_prev_close"] = (work["Open"] / work["Close"].shift(1)) - 1.0
+    work["range_pct"] = (work["High"] - work["Low"]) / work["Close"].replace(0.0, pd.NA)
+    work["body_pct"] = (work["Close"] - work["Open"]).abs() / work["Close"].replace(0.0, pd.NA)
+    work["close_location"] = (work["Close"] - work["Low"]) / (work["High"] - work["Low"]).replace(0.0, pd.NA)
+    regime_parts = work.apply(_build_regime_score_from_row, axis=1, result_type="expand")
+    if not regime_parts.empty:
+        work["regime_score"] = regime_parts[0]
+        work["regime_confidence"] = regime_parts[1]
+    else:
+        work["regime_score"] = pd.NA
+        work["regime_confidence"] = pd.NA
+    work["next_return_pct"] = ((work["Close"].shift(-1) / work["Close"]) - 1.0) * 100.0
+    work["target_up"] = (work["Close"].shift(-1) > work["Close"]).astype("Int64")
+    return work
+
+
+def _daily_model_feature_cols() -> list[str]:
+    return [
+        "ret1",
+        "ret3",
+        "ret5",
+        "ret10",
+        "volume_ret1",
+        "rsi14",
+        "macd",
+        "macd_signal",
+        "macd_hist",
+        "price_vs_ma50",
+        "price_vs_ma200",
+        "ma50_slope_5",
+        "ma200_slope_10",
+        "adx14",
+        "atr_pct_14",
+        "rvol20",
+        "range_pct",
+        "body_pct",
+        "regime_score",
+        "regime_confidence",
+        "rel_spy_ret1",
+        "rel_spy_ret5",
+        "rel_qqq_ret1",
+        "rel_qqq_ret5",
+        "volatility_10",
+        "volatility_20",
+        "gap_prev_close",
+        "close_location",
+    ]
+
+
+def _build_model_backtest_frame(work: pd.DataFrame, include_target: bool = True) -> tuple[pd.DataFrame, list[str]]:
+    feature_cols = _daily_model_feature_cols()
+    cols = ["date", "Close", *feature_cols]
+    required = list(feature_cols)
+    if include_target:
+        cols[2:2] = ["next_return_pct", "target_up"]
+        required += ["target_up", "next_return_pct"]
+    model_df = work[cols].copy()
+    model_df = model_df.dropna(subset=required).reset_index(drop=True)
+    if include_target and not model_df.empty:
+        model_df["target_up"] = model_df["target_up"].astype(int)
+    return model_df, feature_cols
+
+
+def _build_backtest_benchmark_returns(symbol: str) -> pd.DataFrame:
+    df, _ = _fetch_price_history_cached(
+        ticker=symbol,
+        period="3y",
+        interval="1d",
+        prepost=False,
+        source="twelve_data",
+        ttl_sec=24 * 3600,
+        stale_ttl_sec=7 * 24 * 3600,
+    )
+    work = _build_daily_backtest_frame(df)
+    if work.empty:
+        return pd.DataFrame(columns=["date"])
+    prefix = symbol.lower().replace(".", "_")
+    return work[["date", "ret1", "ret5"]].rename(
+        columns={
+            "ret1": f"{prefix}_ret1",
+            "ret5": f"{prefix}_ret5",
+        }
+    )
+
+
+def _prepare_ticker_model_work(ticker: str) -> tuple[pd.DataFrame, str]:
+    df, provider_used = _fetch_price_history_cached(
+        ticker=ticker,
+        period="3y",
+        interval="1d",
+        prepost=False,
+        source="twelve_data",
+        ttl_sec=24 * 3600,
+        stale_ttl_sec=7 * 24 * 3600,
+    )
+    work = _build_daily_backtest_frame(df)
+    if work.empty or len(work.index) < 260:
+        raise ValueError("Not enough daily history for backtest.")
+
+    for benchmark_symbol in ("SPY", "QQQ"):
+        bench = _build_backtest_benchmark_returns(benchmark_symbol)
+        if bench.empty:
+            raise ValueError(f"Benchmark {benchmark_symbol} history unavailable for backtest.")
+        bench_prefix = benchmark_symbol.lower().replace(".", "_")
+        work = work.merge(bench, on="date", how="left")
+        work[f"rel_{bench_prefix}_ret1"] = work["ret1"] - work[f"{bench_prefix}_ret1"]
+        work[f"rel_{bench_prefix}_ret5"] = work["ret5"] - work[f"{bench_prefix}_ret5"]
+    return work, provider_used
+
+
+def _prepare_ticker_model_frame(ticker: str) -> tuple[pd.DataFrame, str, list[str]]:
+    work, provider_used = _prepare_ticker_model_work(ticker)
+    model_df, feature_cols = _build_model_backtest_frame(work)
+    if model_df.empty or len(model_df.index) < 300:
+        raise ValueError("Not enough modeled daily history for backtest.")
+
+    n = len(model_df.index)
+    train_end = max(180, int(n * 0.60))
+    val_end = max(train_end + 40, int(n * 0.70))
+    val_end = min(val_end, n - 60)
+    if train_end < 180 or val_end <= train_end or (n - val_end) < 40:
+        raise ValueError("Not enough train/validation/test history for model backtest.")
+
+    model_df = model_df.copy()
+    model_df["ticker"] = ticker
+    model_df["provider_used"] = provider_used
+    parts = ["test"] * n
+    for i in range(train_end):
+        parts[i] = "train"
+    for i in range(train_end, val_end):
+        parts[i] = "val"
+    model_df["part"] = parts
+    return model_df, provider_used, feature_cols
+
+
+def _prepare_ticker_scan_frame(ticker: str) -> tuple[pd.DataFrame, pd.Series, str, list[str]]:
+    work, provider_used = _prepare_ticker_model_work(ticker)
+    trainable_df, feature_cols = _build_model_backtest_frame(work, include_target=True)
+    live_df, _ = _build_model_backtest_frame(work, include_target=False)
+    if trainable_df.empty or len(trainable_df.index) < 300:
+        raise ValueError("Not enough modeled daily history for scanner.")
+    if live_df.empty:
+        raise ValueError("No current feature row available for scanner.")
+    live_row = live_df.iloc[-1].copy()
+    return trainable_df, live_row, provider_used, feature_cols
+
+
+def _run_pooled_backtest(
+    tickers: list[str],
+    prob_threshold: float = 0.90,
+    confidence_threshold: float = 75.0,
+) -> tuple[list[dict], dict, list[str]]:
+    try:
+        from sklearn.isotonic import IsotonicRegression
+        from sklearn.metrics import accuracy_score
+        from lightgbm import LGBMClassifier
+    except Exception as exc:
+        raise RuntimeError(
+            "lightgbm and scikit-learn are required for model backtest. Install them in the app environment."
+        ) from exc
+
+    frames: list[pd.DataFrame] = []
+    errors: list[str] = []
+    provider_used = "twelve_data"
+    feature_cols: list[str] | None = None
+    for idx, ticker in enumerate(tickers):
+        try:
+            model_df, provider_used, feature_cols = _prepare_ticker_model_frame(ticker)
+            frames.append(model_df)
+        except Exception as exc:
+            errors.append(f"{ticker}: {exc}")
+        if idx < len(tickers) - 1:
+            time.sleep(0.8)
+
+    if not frames or not feature_cols:
+        raise ValueError("Backtest failed for all tickers.")
+
+    all_df = pd.concat(frames, ignore_index=True)
+    train_df = all_df[all_df["part"] == "train"].copy()
+    val_df = all_df[all_df["part"] == "val"].copy()
+    test_df = all_df[all_df["part"] == "test"].copy()
+    if train_df.empty or val_df.empty or test_df.empty:
+        raise ValueError("Not enough pooled train/validation/test rows for backtest.")
+
+    model = LGBMClassifier(
+        objective="binary",
+        n_estimators=400,
+        max_depth=4,
+        learning_rate=0.03,
+        subsample=0.85,
+        colsample_bytree=0.85,
+        reg_lambda=1.5,
+        min_child_samples=25,
+        random_state=42,
+        n_jobs=4,
+        verbosity=-1,
+    )
+    model.fit(train_df[feature_cols], train_df["target_up"].astype(int))
+
+    val_probs = model.predict_proba(val_df[feature_cols])[:, 1]
+    calibrator = IsotonicRegression(out_of_bounds="clip")
+    calibrator.fit(val_probs, val_df["target_up"].astype(int))
+
+    raw_test_probs = model.predict_proba(test_df[feature_cols])[:, 1]
+    test_probs = calibrator.transform(raw_test_probs)
+    test_df = test_df.copy()
+    test_df["p_up_tomorrow"] = test_probs
+    test_df["p_down_tomorrow"] = 1.0 - test_probs
+    test_df["confidence_pct"] = (
+        pd.Series(test_probs, index=test_df.index).sub(0.5).abs().mul(200.0).clip(lower=0.0, upper=100.0)
+    )
+    test_df["predicted_up"] = test_df["p_up_tomorrow"] >= 0.5
+    test_df["actual_up"] = test_df["target_up"].astype(int) == 1
+    test_df["actual_return_pct"] = pd.to_numeric(test_df["next_return_pct"], errors="coerce")
+
+    baseline_always_up = (test_df["actual_up"] == True).mean() * 100.0
+    baseline_prev_momentum = (
+        (pd.to_numeric(test_df["ret1"], errors="coerce").fillna(0.0) > 0.0) == test_df["actual_up"]
+    ).mean() * 100.0
+    baseline_mean_revert = (
+        (pd.to_numeric(test_df["ret1"], errors="coerce").fillna(0.0) <= 0.0) == test_df["actual_up"]
+    ).mean() * 100.0
+
+    bucket_specs = [
+        ("50-60%", 0.50, 0.60),
+        ("60-70%", 0.60, 0.70),
+        ("70-80%", 0.70, 0.80),
+        ("80-90%", 0.80, 0.90),
+        ("90%+", 0.90, 1.01),
+    ]
+    aggregate_buckets: list[dict] = []
+    strongest = test_df[["p_up_tomorrow", "p_down_tomorrow"]].max(axis=1)
+    for label, low, high in bucket_specs:
+        mask = (strongest >= low) & (strongest < high)
+        count = int(mask.sum())
+        hit_rate = None
+        if count:
+            hit_rate = float(round((test_df.loc[mask, "predicted_up"] == test_df.loc[mask, "actual_up"]).mean() * 100.0, 1))
+        aggregate_buckets.append({"label": label, "count": count, "hit_rate": hit_rate})
+
+    threshold_sweep: list[dict] = []
+    candidate_prob_thresholds = [0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90]
+    candidate_conf_thresholds = [50.0, 60.0, 70.0, 75.0, 80.0]
+    for p_thresh in candidate_prob_thresholds:
+        for conf_thresh in candidate_conf_thresholds:
+            mask = (
+                (test_df[["p_up_tomorrow", "p_down_tomorrow"]].max(axis=1) >= p_thresh)
+                & (test_df["confidence_pct"] >= conf_thresh)
+            )
+            count = int(mask.sum())
+            if not count:
+                threshold_sweep.append(
+                    {
+                        "prob_threshold": p_thresh,
+                        "confidence_threshold": conf_thresh,
+                        "signals": 0,
+                        "hit_rate": None,
+                    }
+                )
+                continue
+            hit_rate = round((test_df.loc[mask, "predicted_up"] == test_df.loc[mask, "actual_up"]).mean() * 100.0, 1)
+            threshold_sweep.append(
+                {
+                    "prob_threshold": p_thresh,
+                    "confidence_threshold": conf_thresh,
+                    "signals": count,
+                    "hit_rate": hit_rate,
+                }
+            )
+    recommended_thresholds = None
+    viable = [
+        item for item in threshold_sweep
+        if item.get("signals", 0) >= 25 and item.get("hit_rate") is not None
+    ]
+    if viable:
+        viable.sort(
+            key=lambda item: (
+                float(item.get("hit_rate") or 0.0),
+                math.log10(max(1, int(item.get("signals") or 1))),
+                float(item.get("prob_threshold") or 0.0),
+                -float(item.get("confidence_threshold") or 0.0),
+            ),
+            reverse=True,
+        )
+        recommended_thresholds = viable[0]
+
+    results: list[dict] = []
+    for ticker, ticker_df in test_df.groupby("ticker", sort=True):
+        tested = int(len(ticker_df.index))
+        overall_hit_rate = round((ticker_df["predicted_up"] == ticker_df["actual_up"]).mean() * 100.0, 1) if tested else None
+        strong_up_mask = (ticker_df["p_up_tomorrow"] >= prob_threshold) & (ticker_df["confidence_pct"] >= confidence_threshold)
+        strong_down_mask = (ticker_df["p_down_tomorrow"] >= prob_threshold) & (ticker_df["confidence_pct"] >= confidence_threshold)
+        strong_up_total = int(strong_up_mask.sum())
+        strong_down_total = int(strong_down_mask.sum())
+        strong_up_hit_rate = round((ticker_df.loc[strong_up_mask, "actual_up"]).mean() * 100.0, 1) if strong_up_total else None
+        strong_down_hit_rate = round((~ticker_df.loc[strong_down_mask, "actual_up"]).mean() * 100.0, 1) if strong_down_total else None
+        recent_signal_rows = ticker_df.loc[strong_up_mask | strong_down_mask].tail(8)
+        recent_signals = [
+            {
+                "date": pd.to_datetime(row["date"], utc=True).date().isoformat(),
+                "bias": "bullish" if float(row["p_up_tomorrow"]) >= float(row["p_down_tomorrow"]) else "bearish",
+                "p_up_tomorrow": round(float(row["p_up_tomorrow"]), 4),
+                "p_down_tomorrow": round(float(row["p_down_tomorrow"]), 4),
+                "confidence_pct": round(float(row["confidence_pct"]), 1),
+                "actual_return_pct": round(float(row["actual_return_pct"]), 3) if pd.notna(row["actual_return_pct"]) else None,
+                "actual_direction": "up" if bool(row["actual_up"]) else "down",
+            }
+            for _, row in recent_signal_rows.iterrows()
+        ]
+        results.append(
+            {
+                "ticker": ticker,
+                "provider_used": provider_used,
+                "days_tested": tested,
+                "overall_hit_rate": overall_hit_rate,
+                "strong_up_signals": strong_up_total,
+                "strong_up_hit_rate": strong_up_hit_rate,
+                "strong_down_signals": strong_down_total,
+                "strong_down_hit_rate": strong_down_hit_rate,
+                "thresholds": {
+                    "p_threshold": prob_threshold,
+                    "confidence_threshold": confidence_threshold,
+                },
+                "recent_strong_signals": recent_signals,
+                "notes": [
+                    "Uses a pooled daily model trained across the selected ticker universe.",
+                    "Probabilities are calibrated on a chronological validation split.",
+                    "Backtest intentionally omits archived news/fundamentals to avoid look-ahead bias.",
+                ],
+            }
+        )
+
+    summary = {
+        "tickers_tested": len(results),
+        "overall_hit_rate": round(accuracy_score(test_df["actual_up"], test_df["predicted_up"]) * 100.0, 1),
+        "strong_up_signals": int(((test_df["p_up_tomorrow"] >= prob_threshold) & (test_df["confidence_pct"] >= confidence_threshold)).sum()),
+        "strong_down_signals": int(((test_df["p_down_tomorrow"] >= prob_threshold) & (test_df["confidence_pct"] >= confidence_threshold)).sum()),
+        "model": {
+            "type": "LightGBMClassifier + IsotonicRegression",
+            "train_days": int(len(train_df.index)),
+            "validation_days": int(len(val_df.index)),
+            "test_days": int(len(test_df.index)),
+            "features": feature_cols,
+            "params": {
+                "objective": "high-confidence signal precision",
+                "n_estimators": 400,
+                "max_depth": 4,
+                "learning_rate": 0.03,
+                "subsample": 0.85,
+                "colsample_bytree": 0.85,
+                "reg_lambda": 1.5,
+                "min_child_samples": 25,
+                "split": "chronological 60/10/30 per ticker, pooled across selected tickers",
+            },
+        },
+        "calibration_buckets": aggregate_buckets,
+        "baselines": [
+            {"name": "Always Up", "hit_rate": float(round(baseline_always_up, 1))},
+            {"name": "Prev-Day Momentum", "hit_rate": float(round(baseline_prev_momentum, 1))},
+            {"name": "One-Day Mean Reversion", "hit_rate": float(round(baseline_mean_revert, 1))},
+        ],
+        "threshold_sweep": threshold_sweep,
+        "recommended_thresholds": recommended_thresholds,
+        "notes": [
+            "Backtest uses a pooled model across the selected ticker universe.",
+            "The model is selected for stronger high-confidence alert precision, not peak overall hit rate.",
+            "Higher probability buckets should outperform lower buckets after calibration.",
+            "Archived news/fundamentals are excluded to avoid look-ahead bias.",
+        ],
+    }
+    return results, summary, errors
+
+
+def _make_calibrated_daily_model():
+    from sklearn.isotonic import IsotonicRegression
+    from lightgbm import LGBMClassifier
+
+    model = LGBMClassifier(
+        objective="binary",
+        n_estimators=400,
+        max_depth=4,
+        learning_rate=0.03,
+        subsample=0.85,
+        colsample_bytree=0.85,
+        reg_lambda=1.5,
+        min_child_samples=25,
+        random_state=42,
+        n_jobs=4,
+        verbosity=-1,
+    )
+    calibrator = IsotonicRegression(out_of_bounds="clip")
+    return model, calibrator
+
+
+def _scanner_model_artifact_path(tickers: list[str]) -> Path:
+    normalized = [symbol for symbol in sorted({_sanitize_ticker(t) for t in tickers}) if symbol]
+    universe_key = "|".join(normalized)
+    digest = hashlib.sha256(f"{DAILY_SCANNER_MODEL_VERSION}|{universe_key}".encode("utf-8")).hexdigest()[:16]
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    return MODEL_DIR / f"scanner_model_{digest}.pkl"
+
+
+def _load_scanner_model_artifact(tickers: list[str]) -> dict | None:
+    path = _scanner_model_artifact_path(tickers)
+    if not path.exists():
+        return None
+    try:
+        with path.open("rb") as fh:
+            artifact = pickle.load(fh)
+        if not isinstance(artifact, dict):
+            return None
+        if artifact.get("version") != DAILY_SCANNER_MODEL_VERSION:
+            return None
+        stored = artifact.get("tickers")
+        current = sorted({_sanitize_ticker(t) for t in tickers if _sanitize_ticker(t)})
+        if stored != current:
+            return None
+        if not artifact.get("feature_cols") or artifact.get("model") is None or artifact.get("calibrator") is None:
+            return None
+        return artifact
+    except Exception:
+        return None
+
+
+def _save_scanner_model_artifact(tickers: list[str], artifact: dict) -> None:
+    path = _scanner_model_artifact_path(tickers)
+    payload = {
+        "version": DAILY_SCANNER_MODEL_VERSION,
+        "tickers": sorted({_sanitize_ticker(t) for t in tickers if _sanitize_ticker(t)}),
+        "trained_at_utc": datetime.now(timezone.utc).isoformat(),
+        "feature_cols": list(artifact.get("feature_cols") or []),
+        "model": artifact.get("model"),
+        "calibrator": artifact.get("calibrator"),
+        "train_rows": int(artifact.get("train_rows") or 0),
+        "validation_rows": int(artifact.get("validation_rows") or 0),
+    }
+    with path.open("wb") as fh:
+        pickle.dump(payload, fh, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def _run_live_scanner(
+    tickers: list[str],
+    prob_threshold: float = 0.80,
+    confidence_threshold: float = 50.0,
+    force_retrain: bool = False,
+) -> tuple[list[dict], dict, list[str]]:
+    try:
+        _, _ = _make_calibrated_daily_model()
+    except Exception as exc:
+        raise RuntimeError(
+            "lightgbm and scikit-learn are required for scanner. Install them in the app environment."
+        ) from exc
+
+    artifact = None if force_retrain else _load_scanner_model_artifact(tickers)
+    train_frames: list[pd.DataFrame] = []
+    val_frames: list[pd.DataFrame] = []
+    live_rows: list[dict] = []
+    errors: list[str] = []
+    feature_cols: list[str] | None = list(artifact.get("feature_cols") or []) if artifact else None
+    provider_used = "twelve_data"
+    for idx, ticker in enumerate(tickers):
+        try:
+            trainable_df, live_row, provider_used, feature_cols = _prepare_ticker_scan_frame(ticker)
+            if artifact is None:
+                n = len(trainable_df.index)
+                val_start = max(220, int(n * 0.90))
+                val_start = min(val_start, n - 40)
+                if val_start < 180 or (n - val_start) < 30:
+                    raise ValueError("Not enough train/validation rows for scanner.")
+                train_frames.append(trainable_df.iloc[:val_start].copy())
+                val_frames.append(trainable_df.iloc[val_start:].copy())
+            live_rows.append(
+                {
+                    "ticker": ticker,
+                    "provider_used": provider_used,
+                    "date": live_row.get("date"),
+                    "close": _float_or_none(live_row.get("Close")),
+                    "features": live_row[feature_cols].copy(),
+                }
+            )
+        except Exception as exc:
+            errors.append(f"{ticker}: {exc}")
+        if idx < len(tickers) - 1:
+            time.sleep(0.8)
+
+    if not live_rows or not feature_cols:
+        raise ValueError("Scanner failed for all tickers.")
+    if artifact is None:
+        if not train_frames or not val_frames:
+            raise ValueError("Scanner failed for all tickers.")
+        train_df = pd.concat(train_frames, ignore_index=True)
+        val_df = pd.concat(val_frames, ignore_index=True)
+        model, calibrator = _make_calibrated_daily_model()
+        model.fit(train_df[feature_cols], train_df["target_up"].astype(int))
+        val_probs = model.predict_proba(val_df[feature_cols])[:, 1]
+        calibrator.fit(val_probs, val_df["target_up"].astype(int))
+        _save_scanner_model_artifact(
+            tickers,
+            {
+                "feature_cols": feature_cols,
+                "model": model,
+                "calibrator": calibrator,
+                "train_rows": len(train_df.index),
+                "validation_rows": len(val_df.index),
+            },
+        )
+        model_source = "trained_now"
+        train_rows = int(len(train_df.index))
+        validation_rows = int(len(val_df.index))
+        trained_at = datetime.now(timezone.utc).isoformat()
+    else:
+        model = artifact["model"]
+        calibrator = artifact["calibrator"]
+        model_source = "disk_cache"
+        train_rows = int(artifact.get("train_rows") or 0)
+        validation_rows = int(artifact.get("validation_rows") or 0)
+        trained_at = str(artifact.get("trained_at_utc") or "")
+
+    signals: list[dict] = []
+    for item in live_rows:
+        features_df = pd.DataFrame([item["features"]], columns=feature_cols)
+        raw_prob = float(model.predict_proba(features_df)[0, 1])
+        p_up = float(calibrator.transform([raw_prob])[0])
+        p_down = 1.0 - p_up
+        confidence_pct = max(0.0, min(100.0, abs(p_up - 0.5) * 200.0))
+        strongest = max(p_up, p_down)
+        if strongest < prob_threshold or confidence_pct < confidence_threshold:
+            continue
+        bias = "bullish" if p_up >= p_down else "bearish"
+        signals.append(
+            {
+                "ticker": item["ticker"],
+                "provider_used": item["provider_used"],
+                "as_of": pd.to_datetime(item["date"], utc=True).isoformat() if item.get("date") is not None else "",
+                "close": round(float(item["close"]), 4) if item.get("close") is not None else None,
+                "bias": bias,
+                "p_up_tomorrow": round(p_up, 4),
+                "p_down_tomorrow": round(p_down, 4),
+                "confidence_pct": round(confidence_pct, 1),
+            }
+        )
+
+    signals.sort(
+        key=lambda item: (
+            float(max(item.get("p_up_tomorrow", 0.0), item.get("p_down_tomorrow", 0.0))),
+            float(item.get("confidence_pct", 0.0)),
+        ),
+        reverse=True,
+    )
+    summary = {
+        "tickers_considered": len(live_rows),
+        "signals_found": len(signals),
+        "mode": "more_signals",
+        "thresholds": {
+            "prob_threshold": prob_threshold,
+            "confidence_threshold": confidence_threshold,
+        },
+        "model": {
+            "type": "LightGBMClassifier + IsotonicRegression",
+            "objective": "high-confidence signal precision",
+            "features": feature_cols,
+            "source": model_source,
+            "train_rows": train_rows,
+            "validation_rows": validation_rows,
+            "trained_at_utc": trained_at,
+        },
+    }
+    return signals, summary, errors
+
+
+def _build_backtest_metrics_from_frame(work: pd.DataFrame, idx: int, lookback: int = 20) -> dict | None:
+    if idx <= 0 or idx >= len(work.index):
+        return None
+    row = work.iloc[idx]
+    start_idx = max(0, idx - lookback + 1)
+    window = work.iloc[start_idx : idx + 1]
+    if window.empty:
+        return None
+
+    start_close = _float_or_none(window.iloc[0].get("Close"))
+    end_close = _float_or_none(row.get("Close"))
+    if start_close is None or end_close is None or start_close <= 0:
+        return None
+    change_pct = ((end_close / start_close) - 1.0) * 100.0
+    high = pd.to_numeric(window["High"], errors="coerce").max()
+    low = pd.to_numeric(window["Low"], errors="coerce").min()
+    avg_volume = pd.to_numeric(window["Volume"], errors="coerce").mean()
+
+    return {
+        "summary": {
+            "start": round(start_close, 4),
+            "end": round(end_close, 4),
+            "change_pct": round(change_pct, 3),
+            "high": round(float(high), 4) if pd.notna(high) else None,
+            "low": round(float(low), 4) if pd.notna(low) else None,
+            "avg_volume": round(float(avg_volume), 0) if pd.notna(avg_volume) else None,
+            "last_volume": round(float(_float_or_none(row.get("Volume")) or 0.0), 0),
+        },
+        "indicators": {
+            "rsi14": _float_or_none(row.get("rsi14")),
+            "macd": _float_or_none(row.get("macd")),
+            "macd_signal": _float_or_none(row.get("macd_signal")),
+            "macd_hist": _float_or_none(row.get("macd_hist")),
+            "ma50": _float_or_none(row.get("ma50")),
+            "ma200": _float_or_none(row.get("ma200")),
+            "adx14": _float_or_none(row.get("adx14")),
+            "atr_pct_14": _float_or_none(row.get("atr_pct_14")),
+            "rvol20": _float_or_none(row.get("rvol20")),
+            "regime_score": _float_or_none(row.get("regime_score")),
+            "regime_confidence": _float_or_none(row.get("regime_confidence")),
+        },
+        "patterns": [],
+    }
+
+
+def _run_ticker_backtest(
+    ticker: str,
+    prob_threshold: float = 0.90,
+    confidence_threshold: float = 75.0,
+) -> dict:
+    try:
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.pipeline import Pipeline
+        from sklearn.preprocessing import StandardScaler
+    except Exception as exc:
+        raise RuntimeError("scikit-learn is required for model backtest. Install it in the app environment.") from exc
+
+    df, provider_used = _fetch_price_history_cached(
+        ticker=ticker,
+        period="3y",
+        interval="1d",
+        prepost=False,
+        source="twelve_data",
+        ttl_sec=24 * 3600,
+        stale_ttl_sec=7 * 24 * 3600,
+    )
+    work = _build_daily_backtest_frame(df)
+    if work.empty or len(work.index) < 260:
+        raise ValueError("Not enough daily history for backtest.")
+    model_df, feature_cols = _build_model_backtest_frame(work)
+    if model_df.empty or len(model_df.index) < 260:
+        raise ValueError("Not enough modeled daily history for backtest.")
+
+    split_idx = max(200, int(len(model_df.index) * 0.70))
+    split_idx = min(split_idx, len(model_df.index) - 60)
+    if split_idx < 200 or (len(model_df.index) - split_idx) < 40:
+        raise ValueError("Not enough train/test history for model backtest.")
+
+    train_df = model_df.iloc[:split_idx].copy()
+    test_df = model_df.iloc[split_idx:].copy()
+    X_train = train_df[feature_cols]
+    y_train = train_df["target_up"]
+    X_test = test_df[feature_cols]
+    y_test = test_df["target_up"]
+
+    model = Pipeline(
+        steps=[
+            ("scaler", StandardScaler()),
+            ("logreg", LogisticRegression(max_iter=1500, C=0.5, class_weight="balanced")),
+        ]
+    )
+    model.fit(X_train, y_train)
+    probs_up = model.predict_proba(X_test)[:, 1]
+    preds_up = probs_up >= 0.5
+
+    tested = 0
+    directional_hits = 0
+    strong_up_total = 0
+    strong_up_hits = 0
+    strong_down_total = 0
+    strong_down_hits = 0
+    strong_signals: list[dict] = []
+    calibration_buckets = [
+        {"label": "50-60%", "low": 0.50, "high": 0.60, "count": 0, "hits": 0},
+        {"label": "60-70%", "low": 0.60, "high": 0.70, "count": 0, "hits": 0},
+        {"label": "70-80%", "low": 0.70, "high": 0.80, "count": 0, "hits": 0},
+        {"label": "80-90%", "low": 0.80, "high": 0.90, "count": 0, "hits": 0},
+        {"label": "90%+", "low": 0.90, "high": 1.01, "count": 0, "hits": 0},
+    ]
+
+    for local_idx, (_, row) in enumerate(test_df.iterrows()):
+        next_return_pct = _float_or_none(row.get("next_return_pct"))
+        close_now = _float_or_none(row.get("Close"))
+        if close_now is None or close_now <= 0:
+            continue
+        tested += 1
+        actual_return_pct = float(next_return_pct or 0.0)
+        actual_up = actual_return_pct > 0
+        p_up = float(probs_up[local_idx])
+        p_down = 1.0 - p_up
+        predicted_up = bool(preds_up[local_idx])
+        if predicted_up == actual_up:
+            directional_hits += 1
+
+        confidence = _clamp(abs(p_up - 0.5) * 200.0, 0.0, 100.0)
+        strongest_prob = max(p_up, p_down)
+
+        for bucket in calibration_buckets:
+            if bucket["low"] <= strongest_prob < bucket["high"]:
+                bucket["count"] += 1
+                predicted_direction_up = p_up >= p_down
+                if (predicted_direction_up and actual_up) or ((not predicted_direction_up) and (not actual_up)):
+                    bucket["hits"] += 1
+                break
+
+        signal_record = {
+            "date": pd.to_datetime(row["date"], utc=True).date().isoformat(),
+            "bias": "bullish" if p_up >= p_down else "bearish",
+            "p_up_tomorrow": round(p_up, 4),
+            "p_down_tomorrow": round(p_down, 4),
+            "confidence_pct": round(confidence, 1),
+            "actual_return_pct": round(actual_return_pct, 3),
+            "actual_direction": "up" if actual_up else "down",
+        }
+
+        if p_up >= prob_threshold and confidence >= confidence_threshold:
+            strong_up_total += 1
+            if actual_up:
+                strong_up_hits += 1
+            strong_signals.append(signal_record)
+        elif p_down >= prob_threshold and confidence >= confidence_threshold:
+            strong_down_total += 1
+            if not actual_up:
+                strong_down_hits += 1
+            strong_signals.append(signal_record)
+
+    if tested == 0:
+        raise ValueError("No eligible daily bars for backtest.")
+
+    return {
+        "ticker": ticker,
+        "provider_used": provider_used,
+        "days_tested": tested,
+        "overall_hit_rate": round((directional_hits / tested) * 100.0, 1),
+        "strong_up_signals": strong_up_total,
+        "strong_up_hit_rate": round((strong_up_hits / strong_up_total) * 100.0, 1) if strong_up_total else None,
+        "strong_down_signals": strong_down_total,
+        "strong_down_hit_rate": round((strong_down_hits / strong_down_total) * 100.0, 1) if strong_down_total else None,
+        "thresholds": {
+            "p_threshold": prob_threshold,
+            "confidence_threshold": confidence_threshold,
+        },
+        "model": {
+            "type": "LogisticRegression",
+            "train_days": int(len(train_df.index)),
+            "test_days": int(len(test_df.index)),
+            "features": feature_cols,
+            "params": {
+                "C": 0.5,
+                "class_weight": "balanced",
+                "max_iter": 1500,
+                "split": "chronological 70/30",
+            },
+        },
+        "calibration_buckets": [
+            {
+                "label": bucket["label"],
+                "count": int(bucket["count"]),
+                "hit_rate": round((bucket["hits"] / bucket["count"]) * 100.0, 1) if bucket["count"] else None,
+            }
+            for bucket in calibration_buckets
+        ],
+        "recent_strong_signals": strong_signals[-8:],
+        "notes": [
+            "Uses each ticker's own daily history only; no cross-ticker mixing.",
+            "Uses a per-ticker logistic regression trained on daily technical features.",
+            "Backtest intentionally omits archived news/fundamentals to avoid look-ahead bias.",
+        ],
+    }
+
+
 def _fetch_finnhub_news_cached(ticker: str, day_window: int = 10, ttl_sec: int = 300) -> list[dict]:
     symbol = _sanitize_ticker(ticker)
     if not symbol:
         raise ValueError("Ticker is required.")
 
-    api_key = (os.getenv("FINNHUB_API_KEY") or "").strip()
+    api_key = _get_config_value("FINNHUB_API_KEY")
     if not api_key:
         raise ValueError("FINNHUB_API_KEY is not configured.")
 
@@ -1302,7 +2830,7 @@ def api_history():
             points = _filter_regular_session_points(points)
         if not points:
             extra_hint = ""
-            if not os.getenv("TWELVE_DATA_API_KEY", "").strip():
+            if not _get_config_value("TWELVE_DATA_API_KEY"):
                 extra_hint = " TWELVE_DATA_API_KEY is not set in this server process."
             diagnosis = diagnose_source_failure(ticker=ticker, period=period, interval=interval, source=source)
             if diagnosis:
@@ -1384,7 +2912,7 @@ def api_rsi_monitor_status():
 
 
 def _call_openai(api_key: str, prompt: str, trend_img: str, regime_img: str, override_model: str = "") -> tuple[str, str, dict | None]:
-    model = override_model.strip() if override_model else (os.getenv("OPENAI_CHART_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini")
+    model = override_model.strip() if override_model else (_get_config_value("CHART_AI_MODEL") or "gpt-4.1-mini")
     body = {
         "model": model,
         "input": [
@@ -1460,7 +2988,7 @@ def _call_gemini_model(api_key: str, model: str, parts: list) -> tuple[str, dict
 
 def _call_gemini(api_key: str, prompt: str, trend_img: str, regime_img: str, override_model: str = "") -> tuple[str, str, dict | None]:
     explicit = bool(override_model and override_model.strip())
-    model = override_model.strip() if explicit else (os.getenv("GEMINI_CHART_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash")
+    model = override_model.strip() if explicit else (_get_config_value("CHART_AI_MODEL") or "gemini-2.5-flash")
     fallback = "gemini-2.0-flash"
     parts = [
         {"text": prompt},
@@ -1481,7 +3009,7 @@ def _call_gemini(api_key: str, prompt: str, trend_img: str, regime_img: str, ove
 
 
 def _call_groq(api_key: str, prompt: str, trend_img: str, regime_img: str, override_model: str = "") -> tuple[str, str, dict | None]:
-    model = override_model.strip() if override_model else (os.getenv("GROQ_CHART_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct").strip() or "meta-llama/llama-4-scout-17b-16e-instruct")
+    model = override_model.strip() if override_model else (_get_config_value("CHART_AI_MODEL") or "meta-llama/llama-4-scout-17b-16e-instruct")
     content: list = [{"type": "text", "text": prompt}]
     for label, img in (("Trend view screenshot:", trend_img), ("Regime view screenshot:", regime_img)):
         content.append({"type": "text", "text": label})
@@ -1519,6 +3047,62 @@ def _call_groq(api_key: str, prompt: str, trend_img: str, regime_img: str, overr
     return text, model, None
 
 
+def _call_anthropic(api_key: str, prompt: str, trend_img: str, regime_img: str, override_model: str = "") -> tuple[str, str, dict | None]:
+    model = override_model.strip() if override_model else (_get_config_value("CHART_AI_MODEL") or "claude-3-5-sonnet-latest")
+    content: list[dict] = [{"type": "text", "text": prompt}]
+    for label, img in (("Trend view screenshot:", trend_img), ("Regime view screenshot:", regime_img)):
+        content.append({"type": "text", "text": label})
+        if img.startswith("data:") and "," in img:
+            header, encoded = img.split(",", 1)
+            media_type = "image/png"
+            if ";base64" in header and ":" in header:
+                media_type = header.split(":", 1)[1].split(";", 1)[0] or "image/png"
+            content.append({
+                "type": "image",
+                "source": {"type": "base64", "media_type": media_type, "data": encoded},
+            })
+        else:
+            content.append({"type": "text", "text": f"[image: {img[:100]}]"})
+    body = {
+        "model": model,
+        "max_tokens": 1800,
+        "messages": [{"role": "user", "content": content}],
+    }
+    req_data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=req_data,
+        headers={
+            "Content-Type": "application/json",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            raw = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace") if exc.fp else str(exc)
+        return "", model, {"error": "Claude request failed", "detail": detail[:2000], "status": 502}
+    except Exception as exc:
+        return "", model, {"error": "Claude request failed", "detail": str(exc)[:1000], "status": 502}
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return "", model, {"error": "Claude response parse failed", "detail": raw[:2000], "status": 502}
+    chunks: list[str] = []
+    for block in obj.get("content") or []:
+        if isinstance(block, dict) and block.get("type") == "text":
+            text = str(block.get("text") or "").strip()
+            if text:
+                chunks.append(text)
+    text = "\n\n".join(chunks).strip()
+    if not text:
+        return "", model, {"error": "No explanation text returned from Claude.", "status": 502}
+    return text, model, None
+
+
 _AI_PROVIDER_CATALOG = {
     "openai": {
         "name": "OpenAI",
@@ -1545,6 +3129,14 @@ _AI_PROVIDER_CATALOG = {
             {"label": "Fast", "models": ["llama-3.3-70b-versatile", "llama3-70b-8192"]},
         ],
     },
+    "anthropic": {
+        "name": "Claude",
+        "env_key": "ANTHROPIC_API_KEY",
+        "model_groups": [
+            {"label": "Haiku / Fast", "models": ["claude-3-5-haiku-latest"]},
+            {"label": "Sonnet", "models": ["claude-3-5-sonnet-latest", "claude-3-7-sonnet-latest"]},
+        ],
+    },
 }
 
 
@@ -1563,9 +3155,9 @@ def _save_ai_settings(settings: dict) -> None:
 
 
 def _get_ai_key(provider: str) -> str:
-    """Return effective API key: env var takes precedence, then saved settings."""
+    """Return effective API key: env var takes precedence, then .env, then legacy saved settings."""
     catalog = _AI_PROVIDER_CATALOG.get(provider, {})
-    env_key = os.getenv(catalog.get("env_key", ""), "").strip()
+    env_key = _get_config_value(catalog.get("env_key", ""))
     if env_key:
         return env_key
     saved = _load_ai_settings()
@@ -1577,7 +3169,7 @@ def api_get_ai_settings():
     saved = _load_ai_settings()
     providers = []
     for pid, cat in _AI_PROVIDER_CATALOG.items():
-        env_val = os.getenv(cat["env_key"], "").strip()
+        env_val = _get_config_value(cat["env_key"])
         saved_val = str((saved.get("keys") or {}).get(pid, "")).strip()
         providers.append({
             "id": pid,
@@ -1588,8 +3180,8 @@ def api_get_ai_settings():
             "key_source": "env" if env_val else ("saved" if saved_val else "none"),
         })
     return jsonify({
-        "provider": saved.get("provider", ""),
-        "model": saved.get("model", ""),
+        "provider": _get_config_value("CHART_AI_PROVIDER", saved.get("provider", "")),
+        "model": _get_config_value("CHART_AI_MODEL", saved.get("model", "")),
         "providers": providers,
     })
 
@@ -1609,7 +3201,72 @@ def api_save_ai_settings():
             cleaned_keys[pid] = val
     settings = {"provider": provider, "model": model, "keys": cleaned_keys}
     _save_ai_settings(settings)
+    _set_config_values(
+        {
+            "CHART_AI_PROVIDER": provider,
+            "CHART_AI_MODEL": model,
+            "OPENAI_API_KEY": cleaned_keys.get("openai", ""),
+            "GEMINI_API_KEY": cleaned_keys.get("gemini", ""),
+            "GROQ_API_KEY": cleaned_keys.get("groq", ""),
+            "ANTHROPIC_API_KEY": cleaned_keys.get("anthropic", ""),
+        }
+    )
     return jsonify({"ok": True, "settings": settings})
+
+
+@app.get("/api/config")
+def api_get_config():
+    saved = _load_ai_settings()
+    provider = _get_config_value("CHART_AI_PROVIDER", saved.get("provider", ""))
+    model = _get_config_value("CHART_AI_MODEL", saved.get("model", ""))
+    llm_keys: dict[str, str] = {}
+    providers: list[dict] = []
+    for pid, cat in _AI_PROVIDER_CATALOG.items():
+        key_val = _get_ai_key(pid)
+        llm_keys[pid] = key_val
+        providers.append({
+            "id": pid,
+            "name": cat["name"],
+            "model_groups": cat["model_groups"],
+            "has_key": bool(key_val),
+            "env_key": cat["env_key"],
+        })
+    return jsonify({
+        "twelve_data_api_key": _get_config_value("TWELVE_DATA_API_KEY"),
+        "finnhub_api_key": _get_config_value("FINNHUB_API_KEY"),
+        "llm_provider": provider,
+        "llm_model": model,
+        "llm_keys": llm_keys,
+        "providers": providers,
+    })
+
+
+@app.post("/api/config")
+def api_save_config():
+    payload = request.get_json(silent=True) or {}
+    llm_keys = payload.get("llm_keys") if isinstance(payload.get("llm_keys"), dict) else {}
+    updates = {
+        "TWELVE_DATA_API_KEY": str(payload.get("twelve_data_api_key") or "").strip(),
+        "FINNHUB_API_KEY": str(payload.get("finnhub_api_key") or "").strip(),
+        "CHART_AI_PROVIDER": str(payload.get("llm_provider") or "").strip().lower(),
+        "CHART_AI_MODEL": str(payload.get("llm_model") or "").strip(),
+        "OPENAI_API_KEY": str(llm_keys.get("openai") or "").strip(),
+        "GEMINI_API_KEY": str(llm_keys.get("gemini") or "").strip(),
+        "GROQ_API_KEY": str(llm_keys.get("groq") or "").strip(),
+        "ANTHROPIC_API_KEY": str(llm_keys.get("anthropic") or "").strip(),
+    }
+    _set_config_values(updates)
+    settings = {
+        "provider": updates["CHART_AI_PROVIDER"],
+        "model": updates["CHART_AI_MODEL"],
+        "keys": {
+            pid: updates.get(cat["env_key"], "")
+            for pid, cat in _AI_PROVIDER_CATALOG.items()
+            if updates.get(cat["env_key"], "")
+        },
+    }
+    _save_ai_settings(settings)
+    return api_get_config()
 
 
 @app.post("/api/chart-explain")
@@ -1633,8 +3290,7 @@ def api_chart_explain():
 
     # Resolve provider: use requested, else saved setting, else first available
     if not requested_provider:
-        saved = _load_ai_settings()
-        requested_provider = saved.get("provider", "")
+        requested_provider = _get_config_value("CHART_AI_PROVIDER", _load_ai_settings().get("provider", ""))
     if not requested_provider:
         for pid in _AI_PROVIDER_CATALOG:
             if _get_ai_key(pid):
@@ -1644,11 +3300,12 @@ def api_chart_explain():
     openai_key = _get_ai_key("openai")
     gemini_key = _get_ai_key("gemini")
     groq_key = _get_ai_key("groq")
-    if not openai_key and not gemini_key and not groq_key:
+    anthropic_key = _get_ai_key("anthropic")
+    if not openai_key and not gemini_key and not groq_key and not anthropic_key:
         return jsonify(
             {
                 "error": "No AI API key is configured.",
-                "hint": "Open the AI Explain panel and add an API key in settings.",
+                "hint": "Open Config from the center menu and add an AI API key.",
             }
         ), 400
 
@@ -1656,6 +3313,8 @@ def api_chart_explain():
     summary = metrics.get("summary") if isinstance(metrics.get("summary"), dict) else {}
     indicators = metrics.get("indicators") if isinstance(metrics.get("indicators"), dict) else {}
     patterns = metrics.get("patterns") if isinstance(metrics.get("patterns"), list) else []
+    tomorrow_up_context = _build_tomorrow_up_context(ticker)
+    local_forecast = _build_local_tomorrow_forecast(metrics, tomorrow_up_context)
 
     horizon_map = {
         "1d": "next 30 minutes to 1 trading day",
@@ -1691,32 +3350,40 @@ def api_chart_explain():
         f"Range selected: {range_key}\n"
         f"Scale: {scale}\n"
         f"Requested outlook horizon: {outlook_horizon}\n"
-        f"Visible window metrics JSON: {json.dumps({'window': window, 'summary': summary, 'indicators': indicators, 'patterns': patterns, 'news': trimmed_news}, ensure_ascii=True)}\n\n"
+        f"Visible window metrics JSON: {json.dumps({'window': window, 'summary': summary, 'indicators': indicators, 'patterns': patterns, 'news': trimmed_news, 'tomorrow_up_context': tomorrow_up_context, 'local_forecast': local_forecast}, ensure_ascii=True)}\n\n"
+        f"Local forecast JSON: {json.dumps(local_forecast, ensure_ascii=True)}\n\n"
+        "Treat the local forecast as the primary quantitative prior. Do not replace it with a different numeric probability. "
+        "Instead, explain whether the chart structure, trend/regime bands, candlestick patterns, news, and tomorrow-up context confirm it, weaken it, or put it at risk.\n\n"
         "Priority order:\n"
         "1. Explain the visible chart window.\n"
         "2. Explicitly compare Trend-view bands and Regime-view bands, and explain what each recent red/green/yellow band implies for timing vs context.\n"
         "3. Incorporate candlestick patterns if present.\n"
         "4. Incorporate the recent news headlines as possible catalysts or risks.\n"
-        "5. Then summarize the most likely NEXT scenario over the requested outlook horizon.\n\n"
+        "5. Incorporate tomorrow-up context from earnings/statistics/fundamentals, especially earnings proximity, last EPS surprise, valuation context, beta, and revenue growth if present.\n"
+        "6. Explain the local tomorrow forecast: P(up tomorrow), P(down tomorrow), confidence, and the main drivers.\n"
+        "7. Then summarize the most likely NEXT scenario over the requested outlook horizon.\n\n"
         "If trend and regime conflict, call that out clearly. If news conflicts with technicals, call that out clearly.\n\n"
         "Return markdown with exactly these sections:\n"
         "1) Window Snapshot (3 bullets)\n"
         "2) Band + Pattern Interpretation (Trend + Regime + Candles) (3-6 bullets)\n"
         f"3) Next Outlook ({outlook_horizon})\n"
-        "   - include: bias, confidence, likely scenario, why, and news impact\n"
+        "   - start with: local tomorrow forecast (P up / P down / confidence)\n"
+        "   - include: bias, confidence, likely scenario, why, news impact, and tomorrow-up context impact\n"
         "4) What Confirms / What Invalidates (2 bullets each)\n"
         "5) Next Bars Checklist (numbered 1-3)\n"
     )
 
-    key_map = {"openai": openai_key, "gemini": gemini_key, "groq": groq_key}
+    key_map = {"openai": openai_key, "gemini": gemini_key, "groq": groq_key, "anthropic": anthropic_key}
     provider = requested_provider if (requested_provider in key_map and key_map[requested_provider]) else next(
-        (pid for pid in ("groq", "openai", "gemini") if key_map[pid]), None
+        (pid for pid in ("groq", "openai", "anthropic", "gemini") if key_map[pid]), None
     )
 
     if provider == "groq":
         text, model, err = _call_groq(groq_key, prompt_text, trend_image, regime_image, override_model=requested_model)
     elif provider == "openai":
         text, model, err = _call_openai(openai_key, prompt_text, trend_image, regime_image, override_model=requested_model)
+    elif provider == "anthropic":
+        text, model, err = _call_anthropic(anthropic_key, prompt_text, trend_image, regime_image, override_model=requested_model)
     elif provider == "gemini":
         text, model, err = _call_gemini(gemini_key, prompt_text, trend_image, regime_image, override_model=requested_model)
     else:
@@ -1724,7 +3391,102 @@ def api_chart_explain():
 
     if err:
         return jsonify(err), err.get("status", 502)
-    return jsonify({"ok": True, "explanation": text, "model": model, "provider": provider})
+    return jsonify({"ok": True, "explanation": text, "model": model, "provider": provider, "local_forecast": local_forecast})
+
+
+@app.post("/api/backtest")
+def api_backtest():
+    payload = request.get_json(silent=True) or {}
+    tickers_raw = payload.get("tickers") if isinstance(payload.get("tickers"), list) else []
+    universe_label = str(payload.get("universe_label") or "").strip()
+    tickers = []
+    for item in tickers_raw:
+        symbol = _sanitize_ticker(item)
+        if symbol and symbol not in tickers:
+            tickers.append(symbol)
+    tickers = tickers[:25]
+    if not tickers:
+        return jsonify({"error": "At least one ticker is required."}), 400
+
+    prob_threshold = _clamp(_safe_float(payload.get("prob_threshold")) or 0.90, 0.50, 0.99)
+    confidence_threshold = _clamp(_safe_float(payload.get("confidence_threshold")) or 75.0, 0.0, 100.0)
+
+    try:
+        results, summary, errors = _run_pooled_backtest(
+            tickers,
+            prob_threshold=prob_threshold,
+            confidence_threshold=confidence_threshold,
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 502
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 500
+
+    if not results and errors:
+        return jsonify({"error": "Backtest failed for all tickers.", "details": errors}), 502
+
+    summary["universe_label"] = universe_label
+    return jsonify(
+        {
+            "ok": True,
+            "source": "twelve_data",
+            "universe_label": universe_label,
+            "summary": summary,
+            "results": results,
+            "errors": errors,
+            "thresholds": {
+                "prob_threshold": prob_threshold,
+                "confidence_threshold": confidence_threshold,
+            },
+        }
+    )
+
+
+@app.post("/api/scanner")
+def api_scanner():
+    payload = request.get_json(silent=True) or {}
+    tickers_raw = payload.get("tickers") if isinstance(payload.get("tickers"), list) else []
+    universe_label = str(payload.get("universe_label") or "").strip()
+    tickers = []
+    for item in tickers_raw:
+        symbol = _sanitize_ticker(item)
+        if symbol and symbol not in tickers:
+            tickers.append(symbol)
+    tickers = tickers[:50]
+    if not tickers:
+        return jsonify({"error": "At least one ticker is required."}), 400
+
+    prob_threshold = _clamp(_safe_float(payload.get("prob_threshold")) or 0.80, 0.50, 0.99)
+    confidence_threshold = _clamp(_safe_float(payload.get("confidence_threshold")) or 50.0, 0.0, 100.0)
+    force_retrain = bool(payload.get("force_retrain"))
+
+    try:
+        signals, summary, errors = _run_live_scanner(
+            tickers,
+            prob_threshold=prob_threshold,
+            confidence_threshold=confidence_threshold,
+            force_retrain=force_retrain,
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 502
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 500
+
+    summary["universe_label"] = universe_label
+    return jsonify(
+        {
+            "ok": True,
+            "source": "twelve_data",
+            "universe_label": universe_label,
+            "summary": summary,
+            "signals": signals,
+            "errors": errors,
+            "thresholds": {
+                "prob_threshold": prob_threshold,
+                "confidence_threshold": confidence_threshold,
+            },
+        }
+    )
 
 
 @app.get("/api/news")
