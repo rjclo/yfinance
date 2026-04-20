@@ -463,6 +463,59 @@
         padding-right: 56px;
       }
 
+      .ticker-input-wrap {
+        position: relative;
+        min-width: 260px;
+        flex: 0 1 320px;
+      }
+
+      .ticker-search-dropdown {
+        position: absolute;
+        top: calc(100% + 6px);
+        left: 0;
+        right: 0;
+        z-index: 1400;
+        background: #fff;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        box-shadow: 0 14px 28px rgba(15, 23, 42, 0.12);
+        overflow: hidden;
+      }
+
+      .ticker-search-item {
+        width: 100%;
+        border: none;
+        background: transparent;
+        text-align: left;
+        padding: 10px 12px;
+        display: grid;
+        gap: 3px;
+        cursor: pointer;
+      }
+
+      .ticker-search-item:hover,
+      .ticker-search-item.active {
+        background: #eff6ff;
+      }
+
+      .ticker-search-symbol {
+        font-weight: 700;
+        color: #0f172a;
+        font-size: 13px;
+      }
+
+      .ticker-search-meta {
+        font-size: 12px;
+        color: #64748b;
+        overflow-wrap: anywhere;
+      }
+
+      .ticker-search-empty {
+        padding: 10px 12px;
+        font-size: 12px;
+        color: #64748b;
+      }
+
       .controls-menu-btn {
         border: none;
         background: transparent;
@@ -1627,7 +1680,10 @@
           </div>
           <div class="controls">
             <button id="centerMenuBtn" class="controls-menu-btn" title="Actions">&#8942;</button>
-            <input id="tickerInput" class="ticker-input" placeholder="Add ticker" maxlength="12" />
+            <div class="ticker-input-wrap">
+              <input id="tickerInput" class="ticker-input" placeholder="Add ticker" maxlength="64" autocomplete="off" />
+              <div id="tickerSearchDropdown" class="ticker-search-dropdown" hidden></div>
+            </div>
             <button id="addBtn" class="primary">Add Ticker</button>
             <button class="range-btn active" data-range="1d">1day</button>
             <button class="range-btn" data-range="1w">10days</button>
@@ -1755,9 +1811,14 @@
       let chartTypeMode = "candles";
       let compressSessions = true;
       let activeWorkspaceTab = localStorage.getItem(WORKSPACE_TAB_KEY) === "portfolio" ? "portfolio" : "chart";
+      let tickerSearchItems = [];
+      let tickerSearchHighlightedIndex = -1;
+      let tickerSearchSeq = 0;
+      let tickerSearchDebounceTimer = null;
       const viewportByRange = {};
 
       const tickerInput = document.getElementById("tickerInput");
+      const tickerSearchDropdown = document.getElementById("tickerSearchDropdown");
       const addBtn = document.getElementById("addBtn");
       const centerMenuBtn = document.getElementById("centerMenuBtn");
       const refreshBtn = document.getElementById("refreshBtn");
@@ -7994,8 +8055,96 @@
         errorEl.textContent = skipped.length ? `Skipped: ${skipped.join(" | ")}` : "";
       }
 
-      function addTicker() {
-        const symbol = sanitizeTicker(tickerInput.value);
+      function hideTickerSearchDropdown() {
+        tickerSearchItems = [];
+        tickerSearchHighlightedIndex = -1;
+        if (tickerSearchDropdown) {
+          tickerSearchDropdown.innerHTML = "";
+          tickerSearchDropdown.setAttribute("hidden", "");
+        }
+      }
+
+      function renderTickerSearchDropdown() {
+        if (!tickerSearchDropdown) return;
+        if (!tickerSearchItems.length) {
+          tickerSearchDropdown.innerHTML = "";
+          tickerSearchDropdown.setAttribute("hidden", "");
+          return;
+        }
+        const html = tickerSearchItems.map((item, idx) => {
+          const exchangeBits = [item.exchange, item.type].filter(Boolean).join(" • ");
+          return `
+            <button type="button" class="ticker-search-item ${idx === tickerSearchHighlightedIndex ? "active" : ""}" data-index="${idx}">
+              <span class="ticker-search-symbol">${escapeHtml(item.symbol || "")}</span>
+              <span class="ticker-search-meta">${escapeHtml(item.name || "")}${exchangeBits ? ` • ${escapeHtml(exchangeBits)}` : ""}</span>
+            </button>
+          `;
+        }).join("");
+        tickerSearchDropdown.innerHTML = html;
+        tickerSearchDropdown.removeAttribute("hidden");
+      }
+
+      async function fetchTickerSearchSuggestions(query) {
+        const q = String(query || "").trim();
+        if (q.length < 2) {
+          hideTickerSearchDropdown();
+          return;
+        }
+        const seq = ++tickerSearchSeq;
+        try {
+          const res = await fetch(`/api/ticker-search?q=${encodeURIComponent(q)}`);
+          const payload = await res.json();
+          if (seq !== tickerSearchSeq) return;
+          tickerSearchItems = Array.isArray(payload.items) ? payload.items : [];
+          tickerSearchHighlightedIndex = tickerSearchItems.length ? 0 : -1;
+          renderTickerSearchDropdown();
+        } catch (err) {
+          if (seq !== tickerSearchSeq) return;
+          hideTickerSearchDropdown();
+          logAction("ticker_search_failed", { query: q, error: err?.message || "request failed" });
+        }
+      }
+
+      function scheduleTickerSearch(query) {
+        if (tickerSearchDebounceTimer) clearTimeout(tickerSearchDebounceTimer);
+        const q = String(query || "").trim();
+        if (q.length < 2) {
+          hideTickerSearchDropdown();
+          return;
+        }
+        tickerSearchDebounceTimer = setTimeout(() => {
+          fetchTickerSearchSuggestions(q);
+        }, 220);
+      }
+
+      function pickTickerSuggestion(index, submit = false) {
+        const item = tickerSearchItems[index];
+        if (!item) return;
+        tickerSearchHighlightedIndex = index;
+        if (tickerInput) tickerInput.value = item.symbol || "";
+        if (submit) {
+          addTicker(item.symbol || "");
+          return;
+        }
+        renderTickerSearchDropdown();
+      }
+
+      function resolveTickerInputSymbol() {
+        const raw = String(tickerInput?.value || "").trim();
+        if (!raw) return "";
+        if (tickerSearchItems.length) {
+          const normalizedRaw = raw.toLowerCase();
+          const preferred = tickerSearchItems.find((item) =>
+            String(item.symbol || "").toLowerCase() === normalizedRaw
+            || String(item.name || "").trim().toLowerCase() === normalizedRaw
+          ) || tickerSearchItems[Math.max(0, tickerSearchHighlightedIndex)];
+          if (preferred?.symbol) return sanitizeTicker(preferred.symbol);
+        }
+        return sanitizeTicker(raw);
+      }
+
+      function addTicker(symbolOverride = "") {
+        const symbol = sanitizeTicker(symbolOverride || resolveTickerInputSymbol());
         if (!symbol) {
           errorEl.textContent = "Enter a valid ticker.";
           return;
@@ -8052,14 +8201,57 @@
         }
 
         tickerInput.value = "";
+        hideTickerSearchDropdown();
         renderLeftTabs();
         renderTickerList();
         loadData();
       }
 
-      addBtn.addEventListener("click", addTicker);
+      if (tickerSearchDropdown) {
+        tickerSearchDropdown.addEventListener("mousedown", (e) => {
+          const btn = e.target instanceof Element ? e.target.closest(".ticker-search-item") : null;
+          if (!btn) return;
+          e.preventDefault();
+          const idx = Number(btn.getAttribute("data-index"));
+          if (Number.isFinite(idx)) pickTickerSuggestion(idx, true);
+        });
+      }
+
+      addBtn.addEventListener("click", () => addTicker());
+      tickerInput.addEventListener("input", () => {
+        scheduleTickerSearch(tickerInput.value);
+      });
+      tickerInput.addEventListener("blur", () => {
+        setTimeout(() => {
+          if (document.activeElement && tickerSearchDropdown?.contains(document.activeElement)) return;
+          hideTickerSearchDropdown();
+        }, 120);
+      });
       tickerInput.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") addTicker();
+        if (e.key === "ArrowDown" && tickerSearchItems.length) {
+          e.preventDefault();
+          tickerSearchHighlightedIndex = Math.min(tickerSearchItems.length - 1, Math.max(0, tickerSearchHighlightedIndex + 1));
+          renderTickerSearchDropdown();
+          return;
+        }
+        if (e.key === "ArrowUp" && tickerSearchItems.length) {
+          e.preventDefault();
+          tickerSearchHighlightedIndex = Math.max(0, tickerSearchHighlightedIndex - 1);
+          renderTickerSearchDropdown();
+          return;
+        }
+        if (e.key === "Escape") {
+          hideTickerSearchDropdown();
+          return;
+        }
+        if (e.key === "Enter") {
+          e.preventDefault();
+          if (tickerSearchItems.length) {
+            pickTickerSuggestion(Math.max(0, tickerSearchHighlightedIndex), true);
+            return;
+          }
+          addTicker();
+        }
       });
 
       rangeButtons.forEach((btn) => {

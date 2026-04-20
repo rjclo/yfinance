@@ -124,6 +124,8 @@ _news_cache_lock = threading.Lock()
 _news_cache: dict[str, dict] = {}
 _twelve_meta_cache_lock = threading.Lock()
 _twelve_meta_cache: dict[tuple[str, str], dict] = {}
+_symbol_search_cache_lock = threading.Lock()
+_symbol_search_cache: dict[str, dict] = {}
 _watchlist_cache_lock = threading.Lock()
 _watchlist_cache: dict[str, dict] = {}
 _twelve_rate_limit_lock = threading.Lock()
@@ -489,6 +491,121 @@ def _fetch_twelve_json_cached(endpoint: str, symbol: str, params: dict | None = 
     with _twelve_meta_cache_lock:
         _twelve_meta_cache[cache_key] = {"at": now, "payload": dict(payload)}
     return payload
+
+
+def _search_twelve_symbols(query: str, ttl_sec: int = 6 * 3600, limit: int = 8) -> list[dict]:
+    raw_query = str(query or "").strip()
+    if len(raw_query) < 2:
+        return []
+    api_key = _get_config_value("TWELVE_DATA_API_KEY")
+    if not api_key:
+        return []
+    cache_key = raw_query.lower()
+    now = time.time()
+    with _symbol_search_cache_lock:
+        hit = _symbol_search_cache.get(cache_key)
+        if hit and (now - float(hit.get("at", 0.0))) < ttl_sec:
+            cached = hit.get("items")
+            if isinstance(cached, list):
+                return [dict(item) for item in cached[:limit] if isinstance(item, dict)]
+
+    query_params = {"symbol": raw_query, "apikey": api_key}
+    url = f"https://api.twelvedata.com/symbol_search?{urllib.parse.urlencode(query_params)}"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; finlab-symbol-search/1.0)",
+            "Accept": "application/json",
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            _append_upstream_api_log(
+                {
+                    "ts_utc": datetime.now(timezone.utc).isoformat(),
+                    "provider": "twelve_data",
+                    "endpoint": "symbol_search",
+                    "symbol": raw_query,
+                    "params": query_params,
+                    "http_status": int(getattr(resp, "status", 200) or 200),
+                    "usage_context": get_upstream_usage_context(),
+                }
+            )
+            raw = resp.read().decode("utf-8")
+    except Exception as exc:
+        code = getattr(exc, "code", None)
+        _append_upstream_api_log(
+            {
+                "ts_utc": datetime.now(timezone.utc).isoformat(),
+                "provider": "twelve_data",
+                "endpoint": "symbol_search",
+                "symbol": raw_query,
+                "params": query_params,
+                "http_status": int(code) if isinstance(code, int) else None,
+                "error": exc.__class__.__name__,
+                "usage_context": get_upstream_usage_context(),
+            }
+        )
+        return []
+
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        return []
+    rows = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        return []
+
+    normalized_query = raw_query.lower()
+
+    def _score(row: dict) -> tuple:
+        symbol = _sanitize_ticker(row.get("symbol"))
+        name = str(row.get("instrument_name") or row.get("name") or "").strip()
+        exchange = str(row.get("exchange") or "").strip().upper()
+        instrument_type = str(row.get("instrument_type") or row.get("type") or "").strip().lower()
+        score = 0
+        if symbol.lower() == normalized_query:
+            score += 120
+        elif symbol.lower().startswith(normalized_query):
+            score += 90
+        elif normalized_query in symbol.lower():
+            score += 50
+        if name.lower() == normalized_query:
+            score += 110
+        elif name.lower().startswith(normalized_query):
+            score += 80
+        elif normalized_query in name.lower():
+            score += 60
+        if exchange in {"NASDAQ", "NYSE", "AMEX", "NYSE ARCA"}:
+            score += 15
+        if instrument_type in {"common stock", "stock", "etf"}:
+            score += 12
+        return (-score, symbol)
+
+    items: list[dict] = []
+    seen_symbols: set[str] = set()
+    for row in sorted([r for r in rows if isinstance(r, dict)], key=_score):
+        symbol = _sanitize_ticker(row.get("symbol"))
+        if not symbol or symbol in seen_symbols:
+            continue
+        seen_symbols.add(symbol)
+        items.append(
+            {
+                "symbol": symbol,
+                "name": str(row.get("instrument_name") or row.get("name") or symbol).strip() or symbol,
+                "exchange": str(row.get("exchange") or "").strip(),
+                "type": str(row.get("instrument_type") or row.get("type") or "").strip(),
+                "country": str(row.get("country") or "").strip(),
+                "currency": str(row.get("currency") or "").strip(),
+            }
+        )
+        if len(items) >= limit:
+            break
+
+    with _symbol_search_cache_lock:
+        _symbol_search_cache[cache_key] = {"at": now, "items": [dict(item) for item in items]}
+    return items
 
 
 def _safe_float(value) -> float | None:
@@ -4233,6 +4350,16 @@ def api_save_config():
     }
     _save_ai_settings(settings)
     return api_get_config()
+
+
+@app.get("/api/ticker-search")
+def api_ticker_search():
+    query = str(request.args.get("q") or "").strip()
+    if len(query) < 2:
+        return jsonify({"items": []})
+    with _upstream_usage_scope("ticker_search"):
+        items = _search_twelve_symbols(query)
+    return jsonify({"items": items})
 
 
 @app.post("/api/chart-explain")
