@@ -39,10 +39,65 @@
         padding: 16px;
       }
 
+      .workspace-tab-strip {
+        display: flex;
+        align-items: flex-end;
+        gap: 8px;
+        margin-bottom: 14px;
+        padding: 0 6px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .workspace-tab {
+        border: 1px solid var(--border);
+        border-bottom: none;
+        background: #e8edf5;
+        color: #334155;
+        border-radius: 18px 18px 0 0;
+        padding: 11px 24px 10px;
+        font-size: 18px;
+        line-height: 1;
+        white-space: nowrap;
+        cursor: pointer;
+        box-shadow: 0 -1px 0 rgba(255,255,255,0.6) inset;
+      }
+
+      .workspace-tab.active {
+        background: #ffffff;
+        color: #0f172a;
+        box-shadow: 0 -1px 0 #fff inset;
+      }
+
       .layout {
         display: grid;
         grid-template-columns: 280px 1fr 300px;
         gap: 14px;
+      }
+
+      .layout.chart-tab-mode {
+        grid-template-columns: 1fr;
+      }
+
+      .layout.chart-tab-mode .sidebar,
+      .layout.chart-tab-mode .import-panel {
+        display: none;
+      }
+
+      .layout.chart-tab-mode .main {
+        grid-column: 1 / -1;
+      }
+
+      .layout.portfolio-tab-mode {
+        grid-template-columns: minmax(420px, 2fr) minmax(280px, 1fr);
+      }
+
+      .layout.portfolio-tab-mode .main {
+        display: none;
+      }
+
+      .layout.portfolio-tab-mode .sidebar,
+      .layout.portfolio-tab-mode .import-panel {
+        display: block;
       }
 
       .panel {
@@ -235,10 +290,33 @@
         max-height: 110px;
       }
 
+      .side-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 8px;
+      }
+
       .side-title {
         font-size: 14px;
         color: var(--muted);
-        margin-bottom: 8px;
+        margin: 0;
+      }
+
+      .side-save-btn {
+        border: 1px solid var(--border);
+        background: #fff;
+        color: #0f172a;
+        border-radius: 10px;
+        padding: 6px 12px;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .side-save-btn:hover {
+        background: #f8fafc;
       }
 
       .ticker-list {
@@ -283,6 +361,21 @@
 
       .row-actions-btn:hover {
         background: #e2e8f0;
+      }
+
+      .watchlist-link-btn {
+        border: none;
+        background: transparent;
+        padding: 0;
+        margin: 0;
+        color: var(--accent);
+        cursor: pointer;
+        font: inherit;
+        text-decoration: underline;
+      }
+
+      .watchlist-link-btn:hover {
+        color: #0369a1;
       }
 
       .row-actions-menu {
@@ -587,7 +680,17 @@
       }
 
       .hint-explain-body {
+        width: 100%;
+        min-height: 260px;
+        resize: vertical;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px 12px;
+        background: #f8fafc;
+        color: #334155;
+        font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
         white-space: pre-wrap;
+        box-sizing: border-box;
       }
 
       .hint-explain-tab-strip {
@@ -597,6 +700,12 @@
 
       .hint-popover[hidden] {
         display: none;
+      }
+
+      .hint-popover.minimized {
+        height: auto !important;
+        min-height: 0 !important;
+        resize: none;
       }
 
       .news-dialog {
@@ -621,6 +730,12 @@
         flex-direction: column;
       }
 
+      .news-dialog.minimized {
+        height: auto !important;
+        min-height: 0 !important;
+        resize: none;
+      }
+
       .config-dialog {
         position: fixed;
         top: 88px;
@@ -628,6 +743,7 @@
         transform: translateX(-50%);
         z-index: 1815;
         width: min(760px, calc(100vw - 32px));
+        min-width: 360px;
         max-height: calc(100vh - 32px);
         border: 1px solid var(--border);
         border-radius: 12px;
@@ -636,6 +752,12 @@
         overflow: hidden;
         display: flex;
         flex-direction: column;
+      }
+
+      .config-dialog.minimized {
+        width: min(520px, calc(100vw - 32px));
+        min-width: 280px;
+        max-height: none;
       }
 
       .config-dialog[hidden] {
@@ -650,6 +772,8 @@
         border-bottom: 1px solid var(--border);
         font-weight: 700;
         color: #0f172a;
+        cursor: move;
+        user-select: none;
       }
 
       .config-dialog-body {
@@ -658,6 +782,7 @@
         display: flex;
         flex-direction: column;
         gap: 14px;
+        max-height: calc(100vh - 120px);
       }
 
       .config-section {
@@ -714,6 +839,66 @@
         overflow: auto;
       }
 
+      .dialog-resize-grip {
+        position: absolute;
+        right: 8px;
+        bottom: 8px;
+        width: 18px;
+        height: 18px;
+        border: none;
+        background:
+          linear-gradient(135deg, transparent 0 40%, #cbd5e1 40% 48%, transparent 48% 58%, #cbd5e1 58% 66%, transparent 66% 76%, #cbd5e1 76% 84%, transparent 84% 100%);
+        cursor: nwse-resize;
+        opacity: 0.9;
+      }
+
+      .backtest-grid {
+        display: grid;
+        gap: 0;
+        width: 100%;
+        border-top: 1px solid #e5edf5;
+      }
+
+      .backtest-grid-row {
+        display: grid;
+        gap: 12px;
+        align-items: start;
+        padding: 7px 0;
+        border-bottom: 1px solid #eef2f7;
+      }
+
+      .backtest-grid-row.header {
+        font-weight: 700;
+        color: #0f172a;
+        padding-top: 0;
+      }
+
+      .backtest-grid.baseline .backtest-grid-row {
+        grid-template-columns: minmax(180px, 1.2fr) minmax(110px, 0.7fr);
+      }
+
+      .backtest-grid.calibration .backtest-grid-row {
+        grid-template-columns: minmax(180px, 1.1fr) minmax(100px, 0.6fr) minmax(130px, 0.8fr);
+      }
+
+      .backtest-grid.thresholds .backtest-grid-row {
+        grid-template-columns: minmax(110px, 0.8fr) minmax(110px, 0.8fr) minmax(90px, 0.6fr) minmax(150px, 1fr);
+      }
+
+      .backtest-grid.results .backtest-grid-row {
+        grid-template-columns: minmax(90px, 0.7fr) minmax(60px, 0.45fr) minmax(80px, 0.55fr) minmax(120px, 0.8fr) minmax(120px, 0.8fr) minmax(240px, 1.8fr);
+      }
+
+      .backtest-cell-num {
+        text-align: right;
+        white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .backtest-cell-signals {
+        line-height: 1.35;
+      }
+
       .news-list {
         display: flex;
         flex-direction: column;
@@ -760,6 +945,10 @@
         border-radius: 999px;
         padding: 4px 10px;
         background: #fff;
+      }
+
+      .ma-controls label[hidden] {
+        display: none !important;
       }
 
       .ticker-input {
@@ -1218,6 +1407,7 @@
 
       @media (max-width: 980px) {
         .layout { grid-template-columns: 1fr; }
+        .layout.portfolio-tab-mode { grid-template-columns: 1fr; }
         .chart-wrap { height: 360px; }
         .rsi-chart-wrap { height: 120px; }
       }
@@ -1225,9 +1415,16 @@
   </head>
   <body>
     <div class="wrap">
+      <div class="workspace-tab-strip" role="tablist" aria-label="Workspace views">
+        <button id="workspaceTabChart" class="workspace-tab active" type="button" role="tab" aria-selected="true">Chart</button>
+        <button id="workspaceTabPortfolio" class="workspace-tab" type="button" role="tab" aria-selected="false">Portfolio</button>
+      </div>
       <div class="layout">
         <aside class="panel sidebar">
-          <div class="side-title">Watchlists</div>
+          <div class="side-head">
+            <div class="side-title">Watchlists</div>
+            <button id="portfolioSaveBtn" class="side-save-btn" type="button">Save</button>
+          </div>
           <div id="selectedCount" class="chip">0 / 5 tickers on chart</div>
           <div id="leftTabs" class="chrome-tab-strip left-tab-strip" style="margin-top:8px;"></div>
           <div id="pressureOverall" class="pressure-panel"></div>
@@ -1250,9 +1447,12 @@
           <div id="rulesHintPopover" class="hint-popover" hidden>
             <div id="rulesHintHeader" class="hint-popover-header">
               <div class="hint-popover-title">Chart Guide + AI Explain</div>
-              <button id="rulesHintCloseBtn" class="hint-popover-close" type="button" aria-label="Close guide">X</button>
+              <div style="display:flex; gap:8px; align-items:center;">
+                <button id="rulesHintToggleBtn" class="hint-popover-close" type="button" aria-label="Shrink AI explain">-</button>
+                <button id="rulesHintCloseBtn" class="hint-popover-close" type="button" aria-label="Close guide">X</button>
+              </div>
             </div>
-            <div class="hint-popover-body">
+            <div id="rulesHintBody" class="hint-popover-body">
               <ol class="hint-list">
                 <li><strong>Regime first:</strong> Bull regime favors long setups; Bear regime favors defensive/short setups; Neutral regime means smaller size and stricter filters.</li>
                 <li><strong>Trend for timing:</strong> Green in Bull supports continuation, Red in Bear supports continuation, Yellow is transition/watch only and not a standalone entry.</li>
@@ -1269,15 +1469,26 @@
                   <button id="explainTabCurrent" type="button" class="chrome-tab active">Current Read</button>
                   <button id="explainTabPrediction" type="button" class="chrome-tab">Next Outlook</button>
                 </div>
-                <div id="hintExplainBodyCurrent" class="hint-explain-body"></div>
-                <div id="hintExplainBodyPrediction" class="hint-explain-body" hidden></div>
+                <textarea id="hintExplainBodyCurrent" class="hint-explain-body" readonly></textarea>
+                <textarea id="hintExplainBodyPrediction" class="hint-explain-body" readonly hidden></textarea>
+                <div class="hint-explain-title" style="margin-top:12px;">Follow-up Chat</div>
+                <div id="hintExplainChatHistory" style="border:1px solid var(--border); border-radius:12px; background:#fff; min-height:120px; max-height:220px; overflow:auto; padding:10px; display:flex; flex-direction:column; gap:10px;">
+                  <div style="color:#64748b; font-size:13px;">Ask a follow-up question after the AI explanation finishes.</div>
+                </div>
+                <div style="display:flex; gap:8px; margin-top:10px; align-items:flex-end;">
+                  <textarea id="hintExplainChatInput" class="ai-key-input" rows="3" placeholder="Ask a follow-up about this chart..." style="min-height:72px; resize:vertical;"></textarea>
+                  <button id="hintExplainChatSendBtn" type="button" class="ai-btn ai-btn-primary">Send</button>
+                </div>
               </div>
             </div>
           </div>
           <div id="newsDialog" class="news-dialog" hidden>
             <div id="newsDialogHeader" class="news-dialog-header">
               <div id="newsDialogTitle" class="news-dialog-title">Ticker News</div>
-              <button id="newsDialogCloseBtn" class="news-dialog-close" type="button" aria-label="Close news">X</button>
+              <div style="display:flex; gap:8px; align-items:center;">
+                <button id="newsDialogToggleBtn" class="news-dialog-close" type="button" aria-label="Shrink news">-</button>
+                <button id="newsDialogCloseBtn" class="news-dialog-close" type="button" aria-label="Close news">X</button>
+              </div>
             </div>
             <div id="newsDialogBody" class="news-dialog-body">Select a ticker to load recent news.</div>
           </div>
@@ -1287,6 +1498,7 @@
               <button id="backtestDialogCloseBtn" class="news-dialog-close" type="button" aria-label="Close back test">X</button>
             </div>
             <div id="backtestDialogBody" class="news-dialog-body">Run a back test from the center menu.</div>
+            <button id="backtestDialogResizeGrip" class="dialog-resize-grip" type="button" aria-label="Resize back test"></button>
           </div>
           <div id="scannerDialog" class="news-dialog" hidden>
             <div id="scannerDialogHeader" class="news-dialog-header">
@@ -1295,20 +1507,57 @@
             </div>
             <div id="scannerDialogBody" class="news-dialog-body">Run the scanner from the center menu.</div>
           </div>
-          <div id="configDialog" class="config-dialog" hidden>
-            <div class="config-dialog-header">
-              <div>Config</div>
-              <button id="configDialogCloseBtn" class="hint-popover-close" type="button" aria-label="Close config">X</button>
+          <div id="watchlistDialog" class="news-dialog" hidden>
+            <div id="watchlistDialogHeader" class="news-dialog-header">
+              <div id="watchlistDialogTitle" class="news-dialog-title">Watch List</div>
+              <div style="display:flex; gap:8px; align-items:center;">
+                <button id="watchlistDialogToggleBtn" class="news-dialog-close" type="button" aria-label="Shrink watch list">-</button>
+                <button id="watchlistDialogCloseBtn" class="news-dialog-close" type="button" aria-label="Close watch list">X</button>
+              </div>
             </div>
-            <div class="config-dialog-body">
+            <div id="watchlistDialogBody" class="news-dialog-body">Run the watch list from the center menu.</div>
+          </div>
+          <div id="apiUsageDialog" class="news-dialog" hidden>
+            <div id="apiUsageDialogHeader" class="news-dialog-header">
+              <div id="apiUsageDialogTitle" class="news-dialog-title">API Usage</div>
+              <button id="apiUsageDialogCloseBtn" class="news-dialog-close" type="button" aria-label="Close API usage">X</button>
+            </div>
+            <div id="apiUsageDialogBody" class="news-dialog-body">Load API usage from the center menu.</div>
+          </div>
+          <div id="configDialog" class="config-dialog" hidden>
+            <div id="configDialogHeader" class="config-dialog-header">
+              <div>Config</div>
+              <div style="display:flex; gap:8px; align-items:center;">
+                <button id="configDialogToggleBtn" class="hint-popover-close" type="button" aria-label="Shrink config">-</button>
+                <button id="configDialogCloseBtn" class="hint-popover-close" type="button" aria-label="Close config">X</button>
+              </div>
+            </div>
+            <div id="configDialogBody" class="config-dialog-body">
               <div class="config-section">
                 <div class="config-section-title">Market Data</div>
+                <div class="ai-setting-row">
+                  <label class="ai-setting-label">Source</label>
+                  <select id="configMarketDataSourceSelect" class="ai-select">
+                    <option value="twelve_data">Twelve Data</option>
+                  </select>
+                </div>
                 <div class="ai-setting-row">
                   <label class="ai-setting-label">Twelve</label>
                   <div class="ai-key-wrap">
                     <input id="configTwelveKeyInput" type="password" class="ai-key-input" placeholder="TWELVE_DATA_API_KEY" autocomplete="off" />
                     <button id="configTwelveKeyToggle" type="button" class="ai-key-toggle">Reveal</button>
                   </div>
+                </div>
+                <div class="ai-setting-row">
+                  <label class="ai-setting-label">Auto Refresh</label>
+                  <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:#334155;">
+                    <input id="configAutoRefreshToggle" type="checkbox" />
+                    Refresh chart every 5 minutes
+                  </label>
+                </div>
+                <div class="ai-setting-row">
+                  <label class="ai-setting-label">API Usage</label>
+                  <button id="configApiUsageBtn" type="button" class="ai-btn ai-btn-secondary">Open API Usage</button>
                 </div>
               </div>
               <div class="config-section">
@@ -1319,6 +1568,13 @@
                     <input id="configFinnhubKeyInput" type="password" class="ai-key-input" placeholder="FINNHUB_API_KEY" autocomplete="off" />
                     <button id="configFinnhubKeyToggle" type="button" class="ai-key-toggle">Reveal</button>
                   </div>
+                </div>
+                <div class="ai-setting-row">
+                  <label class="ai-setting-label">News Popup</label>
+                  <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:#334155;">
+                    <input id="configNewsPopupToggle" type="checkbox" />
+                    Open news popup when ticker rows are selected
+                  </label>
                 </div>
               </div>
               <div class="config-section">
@@ -1384,8 +1640,8 @@
             <button class="scale-btn" data-scale="price">price</button>
             <button class="scale-btn" data-scale="percent">%change</button>
             <div class="viewmode-toggle-wrap">
-              <span id="chartTypeLabel" class="viewmode-label">Line view</span>
-              <button id="chartTypeToggle" class="viewmode-toggle" type="button" role="switch" aria-checked="false" aria-label="Toggle candlestick view">
+              <span id="chartTypeLabel" class="viewmode-label">Candles view</span>
+              <button id="chartTypeToggle" class="viewmode-toggle on" type="button" role="switch" aria-checked="true" aria-label="Toggle candlestick view">
                 <span class="viewmode-knob"></span>
               </button>
             </div>
@@ -1395,12 +1651,22 @@
                 <span class="viewmode-knob"></span>
               </button>
             </div>
+            <div class="viewmode-toggle-wrap">
+              <span id="gapModeLabel" class="viewmode-label">Compressed</span>
+              <button id="gapModeToggle" class="viewmode-toggle on" type="button" role="switch" aria-checked="true" aria-label="Toggle compressed sessions">
+                <span class="viewmode-knob"></span>
+              </button>
+            </div>
           </div>
           <div class="ma-controls">
             <label><input type="checkbox" class="ma-toggle" data-ma="ma50" />50d MA</label>
             <label><input type="checkbox" class="ma-toggle" data-ma="ma200" />200d MA</label>
             <label><input type="checkbox" id="rsiToggle" />RSI (14)</label>
             <label><input type="checkbox" id="macdToggle" />MACD</label>
+            <label><input type="checkbox" id="regressionToggle" />Regression</label>
+            <label id="patternToggleWrap" hidden><input type="checkbox" id="patternToggle" />Patterns</label>
+            <label id="buyerSignalToggleWrap" hidden><input type="checkbox" id="buyerSignalToggle" />Buyer Signals</label>
+            <label id="sellerSignalToggleWrap" hidden><input type="checkbox" id="sellerSignalToggle" />Seller Signals</label>
           </div>
 
           <div id="holdingsSummary" class="holdings-summary"></div>
@@ -1443,6 +1709,9 @@
       const MAX_SELECTED = 5;
       const MAX_TICKERS_PER_CATEGORY = 16;
       const AUTO_REFRESH_MS = 5 * 60 * 1000;
+      const WATCHLIST_FORCE_REFRESH_KEY = "yf_watchlist_force_refresh";
+      const WATCHLIST_PREWARM_POLL_MS = 2500;
+      const WORKSPACE_TAB_KEY = "yf_workspace_tab";
       const DEFAULT_TICKERS = [];
       const COLORS = ["#0284c7", "#dc2626", "#16a34a", "#7c3aed", "#ea580c"];
       const RSI_COLORS = ["#f59e0b", "#14b8a6", "#ef4444", "#0ea5e9", "#f97316"];
@@ -1461,10 +1730,10 @@
       let pressureByTicker = {};
       let overallPressure = null;
       let scaleMode = "auto";
-      const dataSource = "twelve_data";
       let resolvedScaleMode = "price";
       let portfoliosDirty = false;
       let latestPayloadByTicker = {};
+      let payloadCacheByRange = {};
       let leftCategories = [];
       let activeLeftCategoryId = "default";
       let holdingContextMenu = null;
@@ -1474,12 +1743,18 @@
       let maVisibility = { ma50: false, ma200: false };
       let showRsi = false;
       let showMacd = false;
+      let showRegression = false;
+      let showPatterns = false;
+      let showBuyerSignals = true;
+      let showSellerSignals = true;
       let trendSensitivity = 50;
       let autoRefreshEnabled = false;
       let autoRefreshTimer = null;
       let newsPopupEnabled = (localStorage.getItem(NEWS_POPUP_KEY) ?? "1") !== "0";
       let bandViewMode = "trend";
-      let chartTypeMode = "line";
+      let chartTypeMode = "candles";
+      let compressSessions = true;
+      let activeWorkspaceTab = localStorage.getItem(WORKSPACE_TAB_KEY) === "portfolio" ? "portfolio" : "chart";
       const viewportByRange = {};
 
       const tickerInput = document.getElementById("tickerInput");
@@ -1497,6 +1772,8 @@
       const sidebarEl = document.querySelector(".panel.sidebar");
       const importPanelEl = document.querySelector(".panel.import-panel");
       const chartWrapEl = document.querySelector(".chart-wrap");
+      const workspaceTabChartEl = document.getElementById("workspaceTabChart");
+      const workspaceTabPortfolioEl = document.getElementById("workspaceTabPortfolio");
       let chartWrapResizeObserver = null;
       let chartWrapResizeTimer = null;
       const tickerList = document.getElementById("tickerList");
@@ -1506,6 +1783,7 @@
       const meta = document.getElementById("meta");
       const errorEl = document.getElementById("error");
       const pressureOverallEl = document.getElementById("pressureOverall");
+      const portfolioSaveBtn = document.getElementById("portfolioSaveBtn");
       const csvFileInput = document.getElementById("csvFileInput");
       const portfolioSaveStatus = document.getElementById("portfolioSaveStatus");
       const importedPortfolioList = document.getElementById("importedPortfolioList");
@@ -1515,22 +1793,40 @@
       const chartTypeLabelEl = document.getElementById("chartTypeLabel");
       const viewModeToggleEl = document.getElementById("viewModeToggle");
       const viewModeLabelEl = document.getElementById("viewModeLabel");
+      const gapModeToggleEl = document.getElementById("gapModeToggle");
+      const gapModeLabelEl = document.getElementById("gapModeLabel");
       const maToggleEls = Array.from(document.querySelectorAll(".ma-toggle"));
       const rsiToggleEl = document.getElementById("rsiToggle");
       const macdToggleEl = document.getElementById("macdToggle");
+      const regressionToggleEl = document.getElementById("regressionToggle");
+      const patternToggleWrapEl = document.getElementById("patternToggleWrap");
+      const patternToggleEl = document.getElementById("patternToggle");
+      const buyerSignalToggleWrapEl = document.getElementById("buyerSignalToggleWrap");
+      const buyerSignalToggleEl = document.getElementById("buyerSignalToggle");
+      const sellerSignalToggleWrapEl = document.getElementById("sellerSignalToggleWrap");
+      const sellerSignalToggleEl = document.getElementById("sellerSignalToggle");
       const rsiWrapEl = document.getElementById("rsiWrap");
       const confluenceAlertsEl = document.getElementById("confluenceAlerts");
       const rulesHintBtn = document.getElementById("rulesHintBtn");
       const rulesHintPopover = document.getElementById("rulesHintPopover");
       const rulesHintHeader = document.getElementById("rulesHintHeader");
+      const rulesHintBody = document.getElementById("rulesHintBody");
+      const rulesHintToggleBtn = document.getElementById("rulesHintToggleBtn");
       const rulesHintCloseBtn = document.getElementById("rulesHintCloseBtn");
       const hintExplainBodyCurrent = document.getElementById("hintExplainBodyCurrent");
       const hintExplainBodyPrediction = document.getElementById("hintExplainBodyPrediction");
+      const hintExplainChatHistory = document.getElementById("hintExplainChatHistory");
+      const hintExplainChatInput = document.getElementById("hintExplainChatInput");
+      const hintExplainChatSendBtn = document.getElementById("hintExplainChatSendBtn");
       const explainTabCurrent = document.getElementById("explainTabCurrent");
       const explainTabPrediction = document.getElementById("explainTabPrediction");
       const aiExplainBtn = document.getElementById("aiExplainBtn");
       const configDialog = document.getElementById("configDialog");
+      const configDialogHeader = document.getElementById("configDialogHeader");
+      const configDialogBody = document.getElementById("configDialogBody");
       const configDialogCloseBtn = document.getElementById("configDialogCloseBtn");
+      const configDialogToggleBtn = document.getElementById("configDialogToggleBtn");
+      const configMarketDataSourceSelect = document.getElementById("configMarketDataSourceSelect");
       const configTwelveKeyInput = document.getElementById("configTwelveKeyInput");
       const configFinnhubKeyInput = document.getElementById("configFinnhubKeyInput");
       const configLlmProviderSelect = document.getElementById("configLlmProviderSelect");
@@ -1539,6 +1835,7 @@
       const configGeminiKeyInput = document.getElementById("configGeminiKeyInput");
       const configGroqKeyInput = document.getElementById("configGroqKeyInput");
       const configAnthropicKeyInput = document.getElementById("configAnthropicKeyInput");
+      const configApiUsageBtn = document.getElementById("configApiUsageBtn");
       const configSaveBtn = document.getElementById("configSaveBtn");
       const configKeyToggleMap = [
         ["configTwelveKeyInput", "configTwelveKeyToggle"],
@@ -1550,6 +1847,7 @@
       ];
       let aiProviders = [];
       let appConfig = {
+        market_data_source: "twelve_data",
         twelve_data_api_key: "",
         finnhub_api_key: "",
         llm_provider: "",
@@ -1559,6 +1857,7 @@
       const newsDialog = document.getElementById("newsDialog");
       const newsDialogHeader = document.getElementById("newsDialogHeader");
       const newsDialogTitle = document.getElementById("newsDialogTitle");
+      const newsDialogToggleBtn = document.getElementById("newsDialogToggleBtn");
       const newsDialogCloseBtn = document.getElementById("newsDialogCloseBtn");
       const newsDialogBody = document.getElementById("newsDialogBody");
       const backtestDialog = document.getElementById("backtestDialog");
@@ -1566,11 +1865,23 @@
       const backtestDialogTitle = document.getElementById("backtestDialogTitle");
       const backtestDialogCloseBtn = document.getElementById("backtestDialogCloseBtn");
       const backtestDialogBody = document.getElementById("backtestDialogBody");
+      const backtestDialogResizeGrip = document.getElementById("backtestDialogResizeGrip");
       const scannerDialog = document.getElementById("scannerDialog");
       const scannerDialogHeader = document.getElementById("scannerDialogHeader");
       const scannerDialogTitle = document.getElementById("scannerDialogTitle");
       const scannerDialogCloseBtn = document.getElementById("scannerDialogCloseBtn");
       const scannerDialogBody = document.getElementById("scannerDialogBody");
+      const watchlistDialog = document.getElementById("watchlistDialog");
+      const watchlistDialogHeader = document.getElementById("watchlistDialogHeader");
+      const watchlistDialogTitle = document.getElementById("watchlistDialogTitle");
+      const watchlistDialogToggleBtn = document.getElementById("watchlistDialogToggleBtn");
+      const watchlistDialogCloseBtn = document.getElementById("watchlistDialogCloseBtn");
+      const watchlistDialogBody = document.getElementById("watchlistDialogBody");
+      const apiUsageDialog = document.getElementById("apiUsageDialog");
+      const apiUsageDialogHeader = document.getElementById("apiUsageDialogHeader");
+      const apiUsageDialogTitle = document.getElementById("apiUsageDialogTitle");
+      const apiUsageDialogCloseBtn = document.getElementById("apiUsageDialogCloseBtn");
+      const apiUsageDialogBody = document.getElementById("apiUsageDialogBody");
       let explainRequestSeq = 0;
       let activeExplainTab = "current";
       let backtestAlertMode = "strongest";
@@ -1582,6 +1893,32 @@
       let scannerDragActive = false;
       let scannerDragOffsetX = 0;
       let scannerDragOffsetY = 0;
+      let apiUsageDragActive = false;
+      let apiUsageDragOffsetX = 0;
+      let apiUsageDragOffsetY = 0;
+      let watchlistDragActive = false;
+      let watchlistDragOffsetX = 0;
+      let watchlistDragOffsetY = 0;
+      let configDragActive = false;
+      let configDragOffsetX = 0;
+      let configDragOffsetY = 0;
+      let hintPopoverMinimized = false;
+      let hintPopoverExpandedHeight = "";
+      let newsDialogMinimized = false;
+      let newsDialogExpandedHeight = "";
+      let watchlistMinimized = false;
+      let watchlistExpandedHeight = "";
+      let configDialogMinimized = false;
+      let configDialogExpandedHeight = "";
+      let watchlistForceRefresh = localStorage.getItem(WATCHLIST_FORCE_REFRESH_KEY) === "1";
+      let watchlistStatusPollTimer = null;
+      let lastWatchlistPrewarmKey = "";
+      let lastWatchlistPrewarmDate = "";
+      let explainChatMessages = [];
+      let explainChatContext = null;
+      let explainFollowupSeq = 0;
+      const configAutoRefreshToggle = document.getElementById("configAutoRefreshToggle");
+      const configNewsPopupToggle = document.getElementById("configNewsPopupToggle");
 
       async function loadConfig() {
         try {
@@ -1589,6 +1926,7 @@
           const data = await res.json();
           aiProviders = data.providers || [];
           appConfig = {
+            market_data_source: data.market_data_source || "twelve_data",
             twelve_data_api_key: data.twelve_data_api_key || "",
             finnhub_api_key: data.finnhub_api_key || "",
             llm_provider: data.llm_provider || "",
@@ -1635,8 +1973,11 @@
 
       function renderConfigDialog() {
         renderConfigProviderSelect(appConfig.llm_provider, appConfig.llm_model);
+        if (configMarketDataSourceSelect) configMarketDataSourceSelect.value = appConfig.market_data_source || "twelve_data";
         if (configTwelveKeyInput) configTwelveKeyInput.value = appConfig.twelve_data_api_key || "";
+        if (configAutoRefreshToggle) configAutoRefreshToggle.checked = !!autoRefreshEnabled;
         if (configFinnhubKeyInput) configFinnhubKeyInput.value = appConfig.finnhub_api_key || "";
+        if (configNewsPopupToggle) configNewsPopupToggle.checked = !!newsPopupEnabled;
         if (configOpenAiKeyInput) configOpenAiKeyInput.value = appConfig.llm_keys?.openai || "";
         if (configGeminiKeyInput) configGeminiKeyInput.value = appConfig.llm_keys?.gemini || "";
         if (configGroqKeyInput) configGroqKeyInput.value = appConfig.llm_keys?.groq || "";
@@ -1700,23 +2041,134 @@
 
       function setExplainBodyText(text, opts = {}) {
         const parts = splitExplainText(text);
-        if (hintExplainBodyCurrent) hintExplainBodyCurrent.textContent = parts.current || text || "";
+        if (hintExplainBodyCurrent) hintExplainBodyCurrent.value = parts.current || text || "";
         if (hintExplainBodyPrediction) {
           const forecastSummary = formatLocalForecastSummary(opts.localForecast);
-          hintExplainBodyPrediction.textContent = `${forecastSummary}${parts.prediction || text || ""}`.trim();
+          hintExplainBodyPrediction.value = `${forecastSummary}${parts.prediction || text || ""}`.trim();
         }
         if (opts.switchToPrediction) setExplainTab("prediction");
+      }
+
+      function renderExplainChatHistory() {
+        if (!hintExplainChatHistory) return;
+        if (!explainChatMessages.length) {
+          hintExplainChatHistory.innerHTML = `<div style="color:#64748b; font-size:13px;">Ask a follow-up question after the AI explanation finishes.</div>`;
+          return;
+        }
+        hintExplainChatHistory.innerHTML = explainChatMessages.map((msg) => {
+          const role = String(msg?.role || "assistant");
+          const text = escapeHtml(String(msg?.text || ""));
+          const bg = role === "user" ? "#eff6ff" : "#f8fafc";
+          const border = role === "user" ? "#bfdbfe" : "var(--border)";
+          const label = role === "user" ? "You" : "AI";
+          return `
+            <div style="align-self:${role === "user" ? "flex-end" : "stretch"}; max-width:${role === "user" ? "88%" : "100%"}; border:1px solid ${border}; border-radius:12px; background:${bg}; padding:10px 12px;">
+              <div style="font-size:11px; font-weight:700; color:#475569; margin-bottom:4px;">${label}</div>
+              <div style="white-space:pre-wrap; color:#0f172a; font-size:13px; line-height:1.45;">${text}</div>
+            </div>
+          `;
+        }).join("");
+        hintExplainChatHistory.scrollTop = hintExplainChatHistory.scrollHeight;
+      }
+
+      function resetExplainChat(context = null) {
+        explainChatContext = context;
+        explainChatMessages = [];
+        if (hintExplainChatInput) hintExplainChatInput.value = "";
+        if (hintExplainChatSendBtn) hintExplainChatSendBtn.disabled = !context;
+        renderExplainChatHistory();
+      }
+
+      async function sendExplainFollowup() {
+        if (!hintExplainChatInput || !hintExplainChatSendBtn) return;
+        const question = String(hintExplainChatInput.value || "").trim();
+        if (!question) return;
+        if (!explainChatContext) {
+          explainChatMessages.push({ role: "assistant", text: "Run the AI explanation first so I have the current chart context." });
+          renderExplainChatHistory();
+          return;
+        }
+        const seq = ++explainFollowupSeq;
+        explainChatMessages.push({ role: "user", text: question });
+        explainChatMessages.push({ role: "assistant", text: "Thinking..." });
+        renderExplainChatHistory();
+        hintExplainChatInput.value = "";
+        hintExplainChatSendBtn.disabled = true;
+        try {
+          const res = await fetch("/api/chart-explain-followup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ticker: explainChatContext.ticker,
+              range: explainChatContext.range,
+              scale: explainChatContext.scale,
+              provider: appConfig.llm_provider || "",
+              model: appConfig.llm_model || "",
+              current_read: explainChatContext.currentRead || "",
+              next_outlook: explainChatContext.nextOutlook || "",
+              local_forecast: explainChatContext.localForecast || null,
+              tomorrow_up_context: explainChatContext.tomorrowUpContext || null,
+              question,
+              history: explainChatMessages
+                .filter((msg) => msg.role === "user" || msg.role === "assistant")
+                .filter((msg) => msg.text !== "Thinking...")
+                .slice(-8),
+            }),
+          });
+          const out = await res.json().catch(() => ({}));
+          if (seq !== explainFollowupSeq) return;
+          explainChatMessages.pop();
+          if (!res.ok) {
+            explainChatMessages.push({ role: "assistant", text: [out.error || "Follow-up request failed.", out.hint || "", out.detail || ""].filter(Boolean).join(" ") });
+          } else {
+            explainChatMessages.push({ role: "assistant", text: String(out.answer || "").trim() || "No follow-up answer returned." });
+          }
+          renderExplainChatHistory();
+        } catch (err) {
+          if (seq !== explainFollowupSeq) return;
+          explainChatMessages.pop();
+          explainChatMessages.push({ role: "assistant", text: `Follow-up request failed: ${err?.message || err}` });
+          renderExplainChatHistory();
+        } finally {
+          hintExplainChatSendBtn.disabled = !explainChatContext;
+        }
       }
 
       function openConfigDialog() {
         if (!configDialog) return;
         renderConfigDialog();
         configDialog.hidden = false;
+        if (!configDialog.style.left && !configDialog.style.top) {
+          configDialog.style.left = `${Math.max(24, Math.round((window.innerWidth - Math.min(760, window.innerWidth - 32)) / 2))}px`;
+          configDialog.style.top = "88px";
+          configDialog.style.transform = "none";
+        }
+        clampFloatingDialogToViewport(configDialog);
       }
 
       function closeConfigDialog() {
         if (!configDialog) return;
         configDialog.hidden = true;
+      }
+
+      function setConfigDialogMinimized(nextMinimized) {
+        if (configDialog) {
+          if (!!nextMinimized && !configDialogMinimized) {
+            configDialogExpandedHeight = configDialog.style.height || `${Math.round(configDialog.getBoundingClientRect().height)}px`;
+          }
+          configDialog.classList.toggle("minimized", !!nextMinimized);
+          if (!!nextMinimized) {
+            configDialog.style.height = "auto";
+          } else {
+            configDialog.style.height = configDialogExpandedHeight || "";
+          }
+        }
+        configDialogMinimized = !!nextMinimized;
+        if (configDialogBody) configDialogBody.hidden = configDialogMinimized;
+        if (configDialogToggleBtn) {
+          configDialogToggleBtn.textContent = configDialogMinimized ? "+" : "-";
+          configDialogToggleBtn.setAttribute("aria-label", configDialogMinimized ? "Expand config" : "Shrink config");
+        }
       }
 
       if (configLlmProviderSelect) {
@@ -1740,11 +2192,24 @@
         configDialogCloseBtn.addEventListener("click", closeConfigDialog);
       }
 
+      if (configDialogToggleBtn) {
+        configDialogToggleBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          setConfigDialogMinimized(!configDialogMinimized);
+          clampFloatingDialogToViewport(configDialog);
+        });
+      }
+
+      if (configApiUsageBtn) {
+        configApiUsageBtn.addEventListener("click", () => runApiUsage());
+      }
+
       if (configSaveBtn) {
         configSaveBtn.addEventListener("click", async () => {
           configSaveBtn.textContent = "Saving...";
           try {
             const payload = {
+              market_data_source: configMarketDataSourceSelect?.value || "twelve_data",
               twelve_data_api_key: configTwelveKeyInput?.value || "",
               finnhub_api_key: configFinnhubKeyInput?.value || "",
               llm_provider: configLlmProviderSelect?.value || "",
@@ -1765,12 +2230,15 @@
             const data = await res.json();
             aiProviders = data.providers || aiProviders;
             appConfig = {
+              market_data_source: data.market_data_source || "twelve_data",
               twelve_data_api_key: data.twelve_data_api_key || "",
               finnhub_api_key: data.finnhub_api_key || "",
               llm_provider: data.llm_provider || "",
               llm_model: data.llm_model || "",
               llm_keys: data.llm_keys || {},
             };
+            setAutoRefreshEnabled(!!configAutoRefreshToggle?.checked);
+            setNewsPopupEnabled(!!configNewsPopupToggle?.checked);
             renderConfigDialog();
             configSaveBtn.textContent = "Saved!";
             setTimeout(() => { configSaveBtn.textContent = "Save Config"; }, 1500);
@@ -1788,6 +2256,19 @@
         explainTabPrediction.addEventListener("click", () => setExplainTab("prediction"));
       }
 
+      if (hintExplainChatSendBtn) {
+        hintExplainChatSendBtn.addEventListener("click", () => sendExplainFollowup());
+      }
+
+      if (hintExplainChatInput) {
+        hintExplainChatInput.addEventListener("keydown", (ev) => {
+          if (ev.key === "Enter" && !ev.shiftKey) {
+            ev.preventDefault();
+            sendExplainFollowup();
+          }
+        });
+      }
+
       loadConfig();
 
       if (aiExplainBtn) {
@@ -1803,6 +2284,11 @@
       let backtestDragActive = false;
       let backtestDragOffsetX = 0;
       let backtestDragOffsetY = 0;
+      let backtestResizeActive = false;
+      let backtestResizeStartX = 0;
+      let backtestResizeStartY = 0;
+      let backtestResizeStartWidth = 0;
+      let backtestResizeStartHeight = 0;
       let activeNewsTicker = localStorage.getItem(NEWS_LAST_TICKER_KEY) || "";
 
       function sanitizeTicker(raw) {
@@ -2018,6 +2504,7 @@
           } else if (importPanelEl) {
             importPanelEl.style.removeProperty("grid-column");
           }
+          setWorkspaceTab(activeWorkspaceTab, { rerenderChart: false, persist: false });
           const canvas = document.getElementById("priceChart");
           if (canvas) {
             canvas.style.removeProperty("width");
@@ -2735,6 +3222,52 @@
           tickers: getAllLeftCategorySymbols(),
           universeLabel: "all tickers across all left-panel categories",
         };
+      }
+
+      function focusTickerFromWatchlist(symbol) {
+        const target = sanitizeTicker(symbol);
+        if (!target) return;
+
+        let targetCategoryId = "";
+        leftCategories = leftCategories.map((category) => {
+          const items = Array.isArray(category?.items) ? category.items : [];
+          const hasTarget = items.some((item) => sanitizeTicker(item?.symbol) === target);
+          if (hasTarget && !targetCategoryId) targetCategoryId = String(category.id || "");
+          return {
+            ...category,
+            items: items.map((item) => ({
+              ...item,
+              selected: hasTarget && sanitizeTicker(item?.symbol) === target,
+            })),
+          };
+        });
+
+        importedPortfolios = importedPortfolios.map((portfolio) => ({
+          ...portfolio,
+          tickers: (portfolio.tickers || []).map((ticker) => ({
+            ...ticker,
+            selected: false,
+          })),
+        }));
+
+        tickers = tickers.map((ticker) => ({
+          ...ticker,
+          selected: sanitizeTicker(ticker.symbol) === target && targetCategoryId === "default",
+        }));
+        saveTickers();
+
+        if (targetCategoryId) {
+          activeLeftCategoryId = targetCategoryId;
+        }
+
+        renderLeftTabs();
+        renderTickerList();
+        renderImportedPortfolios();
+        updateSelectedCount();
+        syncNewsPopupToSelection("watchlist_focus");
+        queueLeftCategoriesAutoSave("watchlist_focus");
+        delete viewportByRange[activeRange];
+        loadData(false, { preserveViewport: false });
       }
 
       function getSelectedImportedHoldings() {
@@ -3756,6 +4289,33 @@
         if (chartTypeLabelEl) {
           chartTypeLabelEl.textContent = on ? "Candles view" : "Line view";
         }
+        if (patternToggleWrapEl) {
+          patternToggleWrapEl.hidden = !on;
+        }
+        if (buyerSignalToggleWrapEl) {
+          buyerSignalToggleWrapEl.hidden = !on;
+        }
+        if (sellerSignalToggleWrapEl) {
+          sellerSignalToggleWrapEl.hidden = !on;
+        }
+        if (patternToggleEl) {
+          patternToggleEl.checked = !!showPatterns;
+        }
+        if (buyerSignalToggleEl) {
+          buyerSignalToggleEl.checked = !!showBuyerSignals;
+        }
+        if (sellerSignalToggleEl) {
+          sellerSignalToggleEl.checked = !!showSellerSignals;
+        }
+        if (!on) {
+          showPatterns = false;
+          if (patternToggleEl) patternToggleEl.checked = false;
+          showBuyerSignals = false;
+          if (buyerSignalToggleEl) buyerSignalToggleEl.checked = false;
+          showSellerSignals = false;
+          if (sellerSignalToggleEl) sellerSignalToggleEl.checked = false;
+          hidePatternDetail();
+        }
         logAction("chart_type_mode_change", { mode: chartTypeMode });
       }
 
@@ -3772,6 +4332,55 @@
           viewModeLabelEl.textContent = on ? "Regime view" : "Trend view";
         }
         logAction("band_view_mode_change", { mode: bandViewMode });
+      }
+
+      function setGapMode(mode) {
+        const compressed = String(mode || "").toLowerCase() === "compressed";
+        compressSessions = compressed;
+        if (gapModeToggleEl) {
+          gapModeToggleEl.classList.toggle("on", compressed);
+          gapModeToggleEl.setAttribute("aria-checked", compressed ? "true" : "false");
+        }
+        if (gapModeLabelEl) {
+          gapModeLabelEl.textContent = compressed ? "Compressed" : "Real gaps";
+        }
+        logAction("gap_mode_change", { mode: compressed ? "compressed" : "real_gaps" });
+      }
+
+      function rerenderChartAfterWorkspaceSwitch() {
+        const payloads = getSelectedSymbols()
+          .map((symbol) => latestPayloadByTicker[symbol])
+          .filter((p) => Array.isArray(p?.points) && p.points.length > 0);
+        if (!payloads.length) return;
+        window.requestAnimationFrame(() => {
+          drawChart(payloads, { preserveViewport: true });
+        });
+      }
+
+      function setWorkspaceTab(tab, opts = {}) {
+        const nextTab = String(tab || "").toLowerCase() === "portfolio" ? "portfolio" : "chart";
+        const rerenderChart = opts.rerenderChart !== false;
+        const persist = opts.persist !== false;
+        activeWorkspaceTab = nextTab;
+        if (layoutEl) {
+          layoutEl.classList.toggle("chart-tab-mode", nextTab === "chart");
+          layoutEl.classList.toggle("portfolio-tab-mode", nextTab === "portfolio");
+        }
+        if (workspaceTabChartEl) {
+          workspaceTabChartEl.classList.toggle("active", nextTab === "chart");
+          workspaceTabChartEl.setAttribute("aria-selected", nextTab === "chart" ? "true" : "false");
+        }
+        if (workspaceTabPortfolioEl) {
+          workspaceTabPortfolioEl.classList.toggle("active", nextTab === "portfolio");
+          workspaceTabPortfolioEl.setAttribute("aria-selected", nextTab === "portfolio" ? "true" : "false");
+        }
+        if (persist) {
+          localStorage.setItem(WORKSPACE_TAB_KEY, nextTab);
+        }
+        logAction("workspace_tab_change", { tab: nextTab });
+        if (nextTab === "chart" && rerenderChart) {
+          rerenderChartAfterWorkspaceSwitch();
+        }
       }
 
 
@@ -3930,72 +4539,60 @@
             ? recent.map((sig) => `${escapeHtml(sig.date || "")}: ${escapeHtml(String(sig.bias || ""))} (${Number(sig.actual_return_pct || 0).toFixed(2)}%)`).join("<br>")
             : '<span class="meta">No signals at threshold.</span>';
           return `
-            <tr>
-              <td><strong>${escapeHtml(item?.ticker || "")}</strong></td>
-              <td>${escapeHtml(String(item?.days_tested ?? ""))}</td>
-              <td>${item?.overall_hit_rate == null ? "n/a" : `${Number(item.overall_hit_rate).toFixed(1)}%`}</td>
-              <td>${escapeHtml(String(item?.strong_up_signals ?? 0))} / ${upRate}</td>
-              <td>${escapeHtml(String(item?.strong_down_signals ?? 0))} / ${downRate}</td>
-              <td>${recentText}</td>
-            </tr>
+            <div class="backtest-grid-row">
+              <div><strong>${escapeHtml(item?.ticker || "")}</strong></div>
+              <div class="backtest-cell-num">${escapeHtml(String(item?.days_tested ?? ""))}</div>
+              <div class="backtest-cell-num">${item?.overall_hit_rate == null ? "n/a" : `${Number(item.overall_hit_rate).toFixed(1)}%`}</div>
+              <div class="backtest-cell-num">${escapeHtml(String(item?.strong_up_signals ?? 0))} / ${upRate}</div>
+              <div class="backtest-cell-num">${escapeHtml(String(item?.strong_down_signals ?? 0))} / ${downRate}</div>
+              <div class="backtest-cell-signals">${recentText}</div>
+            </div>
           `;
         }).join("");
         const errorHtml = errors.length
-          ? `<div class="meta" style="margin-top:12px;color:#b42318;">Errors: ${escapeHtml(errors.join(" | "))}</div>`
+          ? `
+            <div style="margin-top:12px;">
+              <div class="meta" style="margin-bottom:6px;color:#b42318;"><strong>Errors</strong> (${errors.length})</div>
+              <textarea readonly style="width:100%; min-height:140px; resize:vertical; font:12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color:#b42318; background:#fff7f6; border:1px solid #f0c7c2; border-radius:10px; padding:10px;">${escapeHtml(errors.join("\n"))}</textarea>
+            </div>
+          `
           : "";
         const calibrationHtml = calibrationBuckets.length ? `
           <div style="margin:16px 0 12px;">
             <strong>Calibration</strong><br>
             <div class="meta" style="margin:4px 0 8px;">Higher probability buckets should show higher realized hit rates. If they do not, the score mapping is still overstating certainty.</div>
-            <table class="holdings-table" style="width:100%; table-layout:fixed;">
-              <colgroup>
-                <col style="width:40%;">
-                <col style="width:25%;">
-                <col style="width:35%;">
-              </colgroup>
-              <thead>
-                <tr>
-                  <th>Probability Bucket</th>
-                  <th>Signals</th>
-                  <th>Realized Hit Rate</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${calibrationBuckets.map((bucket) => `
-                  <tr>
-                    <td>${escapeHtml(String(bucket?.label || ""))}</td>
-                    <td>${escapeHtml(String(bucket?.count ?? 0))}</td>
-                    <td>${bucket?.hit_rate == null ? "n/a" : `${Number(bucket.hit_rate).toFixed(1)}%`}</td>
-                  </tr>
-                `).join("")}
-              </tbody>
-            </table>
+            <div class="backtest-grid calibration">
+              <div class="backtest-grid-row header">
+                <div>Probability Bucket</div>
+                <div class="backtest-cell-num">Signals</div>
+                <div class="backtest-cell-num">Realized Hit Rate</div>
+              </div>
+              ${calibrationBuckets.map((bucket) => `
+                <div class="backtest-grid-row">
+                  <div>${escapeHtml(String(bucket?.label || ""))}</div>
+                  <div class="backtest-cell-num">${escapeHtml(String(bucket?.count ?? 0))}</div>
+                  <div class="backtest-cell-num">${bucket?.hit_rate == null ? "n/a" : `${Number(bucket.hit_rate).toFixed(1)}%`}</div>
+                </div>
+              `).join("")}
+            </div>
           </div>
         ` : "";
         const baselineHtml = baselines.length ? `
           <div style="margin:16px 0 12px;">
             <strong>Baselines</strong><br>
             <div class="meta" style="margin:4px 0 8px;">These are trivial daily rules. The trained model needs to beat them consistently to be worth using.</div>
-            <table class="holdings-table" style="width:100%; table-layout:fixed;">
-              <colgroup>
-                <col style="width:65%;">
-                <col style="width:35%;">
-              </colgroup>
-              <thead>
-                <tr>
-                  <th>Baseline</th>
-                  <th>Hit Rate</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${baselines.map((item) => `
-                  <tr>
-                    <td>${escapeHtml(String(item?.name || ""))}</td>
-                    <td>${item?.hit_rate == null ? "n/a" : `${Number(item.hit_rate).toFixed(1)}%`}</td>
-                  </tr>
-                `).join("")}
-              </tbody>
-            </table>
+            <div class="backtest-grid baseline">
+              <div class="backtest-grid-row header">
+                <div>Baseline</div>
+                <div class="backtest-cell-num">Hit Rate</div>
+              </div>
+              ${baselines.map((item) => `
+                <div class="backtest-grid-row">
+                  <div>${escapeHtml(String(item?.name || ""))}</div>
+                  <div class="backtest-cell-num">${item?.hit_rate == null ? "n/a" : `${Number(item.hit_rate).toFixed(1)}%`}</div>
+                </div>
+              `).join("")}
+            </div>
           </div>
         ` : "";
         const thresholdHtml = thresholdSweep.length ? `
@@ -4003,40 +4600,30 @@
             <strong>Threshold Tuning</strong><br>
             <div class="meta" style="margin:4px 0 8px;">This sweep chooses alert thresholds for high-confidence signal precision. Confidence is derived from probability distance from 50%, so these thresholds overlap.</div>
             ${recommendedThresholds ? `<div class="meta" style="margin:4px 0 8px;">Recommended starting point: P >= ${Math.round(Number(recommendedThresholds.prob_threshold || 0) * 100)}%, confidence >= ${Number(recommendedThresholds.confidence_threshold || 0).toFixed(0)}%, signals ${escapeHtml(String(recommendedThresholds.signals || 0))}, realized hit rate ${Number(recommendedThresholds.hit_rate || 0).toFixed(1)}%.</div>` : ""}
-            <table class="holdings-table" style="width:100%; table-layout:fixed;">
-              <colgroup>
-                <col style="width:25%;">
-                <col style="width:25%;">
-                <col style="width:20%;">
-                <col style="width:30%;">
-              </colgroup>
-              <thead>
-                <tr>
-                  <th>P Threshold</th>
-                  <th>Confidence</th>
-                  <th>Signals</th>
-                  <th>Realized Hit Rate</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${thresholdSweep
-                  .filter((item) => Number(item?.signals || 0) > 0)
-                  .sort((a, b) => {
-                    const ap = Number(a?.prob_threshold || 0);
-                    const bp = Number(b?.prob_threshold || 0);
-                    if (ap !== bp) return bp - ap;
-                    return Number(b?.confidence_threshold || 0) - Number(a?.confidence_threshold || 0);
-                  })
-                  .map((item) => `
-                    <tr>
-                      <td>${Math.round(Number(item?.prob_threshold || 0) * 100)}%</td>
-                      <td>${Number(item?.confidence_threshold || 0).toFixed(0)}%</td>
-                      <td>${escapeHtml(String(item?.signals || 0))}</td>
-                      <td>${item?.hit_rate == null ? "n/a" : `${Number(item.hit_rate).toFixed(1)}%`}</td>
-                    </tr>
-                  `).join("")}
-              </tbody>
-            </table>
+            <div class="backtest-grid thresholds">
+              <div class="backtest-grid-row header">
+                <div>P Threshold</div>
+                <div class="backtest-cell-num">Confidence</div>
+                <div class="backtest-cell-num">Signals</div>
+                <div class="backtest-cell-num">Realized Hit Rate</div>
+              </div>
+              ${thresholdSweep
+                .filter((item) => Number(item?.signals || 0) > 0)
+                .sort((a, b) => {
+                  const ap = Number(a?.prob_threshold || 0);
+                  const bp = Number(b?.prob_threshold || 0);
+                  if (ap !== bp) return bp - ap;
+                  return Number(b?.confidence_threshold || 0) - Number(a?.confidence_threshold || 0);
+                })
+                .map((item) => `
+                  <div class="backtest-grid-row">
+                    <div>${Math.round(Number(item?.prob_threshold || 0) * 100)}%</div>
+                    <div class="backtest-cell-num">${Number(item?.confidence_threshold || 0).toFixed(0)}%</div>
+                    <div class="backtest-cell-num">${escapeHtml(String(item?.signals || 0))}</div>
+                    <div class="backtest-cell-num">${item?.hit_rate == null ? "n/a" : `${Number(item.hit_rate).toFixed(1)}%`}</div>
+                  </div>
+                `).join("")}
+            </div>
           </div>
         ` : "";
         backtestDialogBody.innerHTML = `
@@ -4062,27 +4649,17 @@
             Tested ${escapeHtml(String(summary?.tickers_tested ?? 0))} tickers. Overall hit rate: ${summary?.overall_hit_rate == null ? "n/a" : `${Number(summary.overall_hit_rate).toFixed(1)}%`}. Strong up signals: ${escapeHtml(String(summary?.strong_up_signals ?? 0))}. Strong down signals: ${escapeHtml(String(summary?.strong_down_signals ?? 0))}.
           </div>
           <div style="overflow:auto;">
-            <table class="holdings-table" style="width:100%; table-layout:fixed;">
-              <colgroup>
-                <col style="width:12%;">
-                <col style="width:10%;">
-                <col style="width:12%;">
-                <col style="width:16%;">
-                <col style="width:16%;">
-                <col style="width:34%;">
-              </colgroup>
-              <thead>
-                <tr>
-                  <th>Ticker</th>
-                  <th>Days</th>
-                  <th>Hit Rate</th>
-                  <th>Strong Up</th>
-                  <th>Strong Down</th>
-                  <th>Recent Signals</th>
-                </tr>
-              </thead>
-              <tbody>${rows || '<tr><td colspan="6" class="meta">No completed backtests.</td></tr>'}</tbody>
-            </table>
+            <div class="backtest-grid results">
+              <div class="backtest-grid-row header">
+                <div>Ticker</div>
+                <div class="backtest-cell-num">Days</div>
+                <div class="backtest-cell-num">Hit Rate</div>
+                <div class="backtest-cell-num">Strong Up</div>
+                <div class="backtest-cell-num">Strong Down</div>
+                <div>Recent Signals</div>
+              </div>
+              ${rows || '<div class="backtest-grid-row"><div class="meta" style="grid-column:1 / -1;">No completed backtests.</div></div>'}
+            </div>
           </div>
           ${baselineHtml}
           ${calibrationHtml}
@@ -4120,19 +4697,22 @@
         const modelMeta = summary?.model || {};
         const modelSource = String(modelMeta?.source || "unknown");
         const trainedAt = formatLocalFromIso(String(modelMeta?.trained_at_utc || ""));
-        const rows = signals.map((item) => `
-          <tr>
-            <td><strong>${escapeHtml(item?.ticker || "")}</strong></td>
-            <td>${escapeHtml(String(item?.bias || ""))}</td>
-            <td>${item?.p_up_tomorrow == null ? "n/a" : `${(Number(item.p_up_tomorrow) * 100).toFixed(1)}%`}</td>
-            <td>${item?.p_down_tomorrow == null ? "n/a" : `${(Number(item.p_down_tomorrow) * 100).toFixed(1)}%`}</td>
-            <td>${item?.confidence_pct == null ? "n/a" : `${Number(item.confidence_pct).toFixed(1)}%`}</td>
-            <td>${item?.close == null ? "n/a" : Number(item.close).toFixed(2)}</td>
-            <td>${escapeHtml(formatLocalFromIso(item?.as_of || "") || "")}</td>
-          </tr>
-        `).join("");
+        const rows = signals.map((item) => [
+          `<strong>${escapeHtml(item?.ticker || "")}</strong>`,
+          escapeHtml(String(item?.bias || "")),
+          item?.p_up_tomorrow == null ? "n/a" : `${(Number(item.p_up_tomorrow) * 100).toFixed(1)}%`,
+          item?.p_down_tomorrow == null ? "n/a" : `${(Number(item.p_down_tomorrow) * 100).toFixed(1)}%`,
+          item?.confidence_pct == null ? "n/a" : `${Number(item.confidence_pct).toFixed(1)}%`,
+          item?.close == null ? "n/a" : Number(item.close).toFixed(2),
+          escapeHtml(formatLocalFromIso(item?.as_of || "") || ""),
+        ]);
         const errorHtml = errors.length
-          ? `<div class="meta" style="margin-top:12px;color:#b42318;">Errors: ${escapeHtml(errors.join(" | "))}</div>`
+          ? `
+            <div style="margin-top:12px;">
+              <div class="meta" style="margin-bottom:6px;color:#b42318;"><strong>Errors</strong> (${errors.length})</div>
+              <textarea readonly style="width:100%; min-height:140px; resize:vertical; font:12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color:#b42318; background:#fff7f6; border:1px solid #f0c7c2; border-radius:10px; padding:10px;">${escapeHtml(errors.join("\n"))}</textarea>
+            </div>
+          `
           : "";
         scannerDialogBody.innerHTML = `
           <div class="meta" style="margin-bottom:12px;">
@@ -4152,29 +4732,13 @@
             This scanner uses the trained daily LightGBM model with the broader threshold so it can surface more candidates. It only reports names that currently trigger a live signal.
           </div>
           <div style="overflow:auto;">
-            <table class="holdings-table" style="width:100%; table-layout:fixed;">
-              <colgroup>
-                <col style="width:14%;">
-                <col style="width:14%;">
-                <col style="width:14%;">
-                <col style="width:14%;">
-                <col style="width:14%;">
-                <col style="width:12%;">
-                <col style="width:18%;">
-              </colgroup>
-              <thead>
-                <tr>
-                  <th>Ticker</th>
-                  <th>Bias</th>
-                  <th>P Up</th>
-                  <th>P Down</th>
-                  <th>Confidence</th>
-                  <th>Close</th>
-                  <th>As Of</th>
-                </tr>
-              </thead>
-              <tbody>${rows || '<tr><td colspan="7" class="meta">No live signals at the current scanner threshold.</td></tr>'}</tbody>
-            </table>
+            ${renderGridBlock(
+              ["minmax(110px, 0.9fr)", "minmax(90px, 0.8fr)", "95px", "95px", "105px", "90px", "minmax(150px, 1fr)"],
+              ["Ticker", "Bias", "P Up", "P Down", "Confidence", "Close", "As Of"],
+              rows,
+              "No live signals at the current scanner threshold.",
+              ["left", "left", "right", "right", "right", "right", "left"]
+            )}
           </div>
           ${errorHtml}
         `;
@@ -4182,6 +4746,525 @@
         if (scannerRetrainBtn) {
           scannerRetrainBtn.addEventListener("click", () => {
             runScannerForLeftPanel({ forceRetrain: true, reuseTickers: true });
+          });
+        }
+      }
+
+      function renderApiUsageDialog(payload, errorMessage = "") {
+        if (!apiUsageDialogTitle || !apiUsageDialogBody) return;
+        apiUsageDialogTitle.textContent = "API Usage";
+        if (errorMessage) {
+          apiUsageDialogBody.innerHTML = `<div class="meta">${escapeHtml(errorMessage)}</div>`;
+          return;
+        }
+        const totals = payload?.totals || {};
+        const byContext = Array.isArray(payload?.by_context) ? payload.by_context : [];
+        const byProvider = Array.isArray(payload?.by_provider) ? payload.by_provider : [];
+        const byEndpoint = Array.isArray(payload?.by_endpoint) ? payload.by_endpoint : [];
+        const recentEntries = Array.isArray(payload?.recent_entries) ? payload.recent_entries : [];
+        const logPath = String(payload?.log_path || "");
+        const maxEntries = Number(payload?.max_entries || 0);
+
+        const contextRows = byContext.map((item) => [
+          `<strong>${escapeHtml(item?.context || "other")}</strong>`,
+          escapeHtml(String(item?.calls ?? 0)),
+          escapeHtml(String(item?.rate_limited ?? 0)),
+          escapeHtml(String(item?.errors ?? 0)),
+          escapeHtml(formatLocalFromIso(item?.last_call_utc || "") || ""),
+          escapeHtml(Object.entries(item?.providers || {}).map(([k, v]) => `${k}:${v}`).join(", ")),
+        ]);
+
+        const providerRows = byProvider.map((item) => [
+          `<strong>${escapeHtml(item?.provider || "")}</strong>`,
+          escapeHtml(String(item?.calls ?? 0)),
+        ]);
+
+        const endpointRows = byEndpoint.map((item) => [
+          escapeHtml(item?.endpoint || ""),
+          escapeHtml(String(item?.calls ?? 0)),
+        ]);
+
+        const recentLines = recentEntries.map((item) => {
+          const stamp = formatLocalFromIso(item?.ts_utc || "") || String(item?.ts_utc || "");
+          const status = item?.http_status == null ? "n/a" : String(item.http_status);
+          const diagnostic = item?.diagnostic ? " diagnostic" : "";
+          const error = item?.error ? ` error=${item.error}` : "";
+          const interval = item?.interval ? ` interval=${item.interval}` : "";
+          return `${stamp} | ${item?.usage_context || "other"} | ${item?.provider || ""}:${item?.endpoint || ""} | ${item?.symbol || ""}${interval} | status=${status}${diagnostic}${error}`;
+        }).join("\n");
+
+        apiUsageDialogBody.innerHTML = `
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; flex-wrap:wrap;">
+            <div class="meta">Recent upstream calls: last ${escapeHtml(String(maxEntries || 0))} entries | Log: ${escapeHtml(logPath)}</div>
+            <button id="apiUsageRefreshBtn" type="button" class="ai-btn ai-btn-secondary">Refresh API Usage</button>
+          </div>
+          <div style="margin-bottom:12px;">
+            <strong>Summary</strong><br>
+            Calls: ${escapeHtml(String(totals?.calls ?? 0))}. Rate limited (429): ${escapeHtml(String(totals?.rate_limited ?? 0))}. Errors: ${escapeHtml(String(totals?.errors ?? 0))}.
+          </div>
+          <div class="meta" style="margin-bottom:12px;">
+            Usage context splits upstream calls by app feature, so we can tell whether chart loads, watch list, scanner, backtest, or AI explain is spending provider quota.
+          </div>
+          <div style="overflow:auto; margin-bottom:12px;">
+            ${renderGridBlock(
+              ["minmax(120px, 1fr)", "90px", "90px", "90px", "180px", "minmax(180px, 1.4fr)"],
+              ["Usage", "Calls", "429s", "Errors", "Last Call", "Providers"],
+              contextRows,
+              "No upstream API usage logged yet.",
+              ["left", "right", "right", "right", "left", "left"]
+            )}
+          </div>
+          <div style="display:grid; grid-template-columns:minmax(220px, 1fr) minmax(280px, 1.4fr); gap:12px; margin-bottom:12px;">
+            <div style="overflow:auto;">
+              <div class="meta" style="margin-bottom:6px;"><strong>By Provider</strong></div>
+              ${renderGridBlock(
+                ["minmax(140px, 1fr)", "90px"],
+                ["Provider", "Calls"],
+                providerRows,
+                "No provider calls yet.",
+                ["left", "right"]
+              )}
+            </div>
+            <div style="overflow:auto;">
+              <div class="meta" style="margin-bottom:6px;"><strong>Top Endpoints</strong></div>
+              ${renderGridBlock(
+                ["minmax(220px, 1fr)", "90px"],
+                ["Endpoint", "Calls"],
+                endpointRows,
+                "No endpoint calls yet.",
+                ["left", "right"]
+              )}
+            </div>
+          </div>
+          <div>
+            <div class="meta" style="margin-bottom:6px;"><strong>Recent Calls</strong></div>
+            <textarea readonly style="width:100%; min-height:220px; resize:vertical; font:12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color:#334155; background:#f8fafc; border:1px solid var(--border); border-radius:10px; padding:10px;">${escapeHtml(recentLines)}</textarea>
+          </div>
+        `;
+        const refreshBtn = document.getElementById("apiUsageRefreshBtn");
+        if (refreshBtn) refreshBtn.addEventListener("click", () => runApiUsage());
+      }
+
+      async function runApiUsage() {
+        if (!apiUsageDialog || !apiUsageDialogBody || !apiUsageDialogTitle) return;
+        apiUsageDialogTitle.textContent = "API Usage";
+        apiUsageDialogBody.innerHTML = `<div class="meta">Loading upstream API usage...</div>`;
+        apiUsageDialog.removeAttribute("hidden");
+        if (!apiUsageDialog.style.left && !apiUsageDialog.style.top) {
+          apiUsageDialog.style.left = `${Math.max(24, Math.round((window.innerWidth - Math.min(920, window.innerWidth - 40)) / 2))}px`;
+          apiUsageDialog.style.top = "96px";
+          apiUsageDialog.style.transform = "none";
+        }
+        clampFloatingDialogToViewport(apiUsageDialog);
+        logAction("api_usage_request", {});
+        try {
+          const res = await fetch("/api/upstream-usage?limit=800");
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            throw new Error(data?.error || `API usage failed (${res.status})`);
+          }
+          renderApiUsageDialog(data, "");
+          logAction("api_usage_success", { calls: Number(data?.totals?.calls || 0) });
+        } catch (err) {
+          renderApiUsageDialog(null, err?.message || "API usage failed.");
+          logAction("api_usage_failed", { error: err?.message || "API usage failed." });
+        }
+      }
+
+      function setWatchlistMinimized(nextMinimized) {
+        if (watchlistDialog) {
+          if (!!nextMinimized && !watchlistMinimized) {
+            watchlistExpandedHeight = watchlistDialog.style.height || `${Math.round(watchlistDialog.getBoundingClientRect().height)}px`;
+          }
+          watchlistDialog.classList.toggle("minimized", !!nextMinimized);
+          if (!!nextMinimized) {
+            watchlistDialog.style.height = "auto";
+            watchlistDialog.style.minHeight = "0";
+          } else {
+            watchlistDialog.style.minHeight = "";
+            watchlistDialog.style.height = watchlistExpandedHeight || "";
+          }
+        }
+        watchlistMinimized = !!nextMinimized;
+        if (watchlistDialogBody) watchlistDialogBody.hidden = watchlistMinimized;
+        if (watchlistDialogToggleBtn) {
+          watchlistDialogToggleBtn.textContent = watchlistMinimized ? "+" : "-";
+          watchlistDialogToggleBtn.setAttribute("aria-label", watchlistMinimized ? "Expand watch list" : "Shrink watch list");
+        }
+      }
+
+      function getLocalDayKey() {
+        try {
+          return new Intl.DateTimeFormat("en-CA", { timeZone: getUserTimeZone() }).format(new Date());
+        } catch (_) {
+          return new Date().toISOString().slice(0, 10);
+        }
+      }
+
+      function stopWatchlistStatusPolling() {
+        if (watchlistStatusPollTimer) {
+          clearTimeout(watchlistStatusPollTimer);
+          watchlistStatusPollTimer = null;
+        }
+      }
+
+      function getWatchlistControlsHtml() {
+        return `
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; flex-wrap:wrap;">
+            <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:#334155;">
+              <input id="watchlistForceRefreshToggle" type="checkbox" ${watchlistForceRefresh ? "checked" : ""} />
+              Force refresh from Twelve Data
+            </label>
+            <button id="watchlistRefreshBtn" type="button" class="ai-btn ai-btn-secondary">Refresh Watch List</button>
+          </div>
+        `;
+      }
+
+      function bindWatchlistControls() {
+        const forceToggle = document.getElementById("watchlistForceRefreshToggle");
+        if (forceToggle) {
+          forceToggle.addEventListener("change", () => {
+            watchlistForceRefresh = !!forceToggle.checked;
+            localStorage.setItem(WATCHLIST_FORCE_REFRESH_KEY, watchlistForceRefresh ? "1" : "0");
+            logAction("watchlist_force_refresh_toggle", { enabled: watchlistForceRefresh });
+          });
+        }
+        const refreshBtn = document.getElementById("watchlistRefreshBtn");
+        if (refreshBtn) {
+          refreshBtn.addEventListener("click", () => {
+            runWatchlistForLeftPanel({
+              forceRefresh: watchlistForceRefresh,
+              retryErrors: false,
+            });
+          });
+        }
+      }
+
+      function setHintPopoverMinimized(nextMinimized) {
+        if (rulesHintPopover) {
+          if (!!nextMinimized && !hintPopoverMinimized) {
+            hintPopoverExpandedHeight = rulesHintPopover.style.height || `${Math.round(rulesHintPopover.getBoundingClientRect().height)}px`;
+          }
+          rulesHintPopover.classList.toggle("minimized", !!nextMinimized);
+          if (!!nextMinimized) {
+            rulesHintPopover.style.height = "auto";
+            rulesHintPopover.style.minHeight = "0";
+          } else {
+            rulesHintPopover.style.minHeight = "";
+            rulesHintPopover.style.height = hintPopoverExpandedHeight || "";
+          }
+        }
+        hintPopoverMinimized = !!nextMinimized;
+        if (rulesHintBody) rulesHintBody.hidden = hintPopoverMinimized;
+        if (rulesHintToggleBtn) {
+          rulesHintToggleBtn.textContent = hintPopoverMinimized ? "+" : "-";
+          rulesHintToggleBtn.setAttribute("aria-label", hintPopoverMinimized ? "Expand AI explain" : "Shrink AI explain");
+        }
+      }
+
+      function setNewsDialogMinimized(nextMinimized) {
+        if (newsDialog) {
+          if (!!nextMinimized && !newsDialogMinimized) {
+            newsDialogExpandedHeight = newsDialog.style.height || `${Math.round(newsDialog.getBoundingClientRect().height)}px`;
+          }
+          newsDialog.classList.toggle("minimized", !!nextMinimized);
+          if (!!nextMinimized) {
+            newsDialog.style.height = "auto";
+            newsDialog.style.minHeight = "0";
+          } else {
+            newsDialog.style.minHeight = "";
+            newsDialog.style.height = newsDialogExpandedHeight || "";
+          }
+        }
+        newsDialogMinimized = !!nextMinimized;
+        if (newsDialogBody) newsDialogBody.hidden = newsDialogMinimized;
+        if (newsDialogToggleBtn) {
+          newsDialogToggleBtn.textContent = newsDialogMinimized ? "+" : "-";
+          newsDialogToggleBtn.setAttribute("aria-label", newsDialogMinimized ? "Expand news" : "Shrink news");
+        }
+      }
+
+      function renderGridBlock(columns, headers, rows, emptyMessage = "No data yet.", alignments = []) {
+        const template = columns.join(" ");
+        const headerHtml = headers.map((header, idx) => `
+          <div style="
+            font-weight:700;
+            color:#0f172a;
+            padding:8px 10px;
+            text-align:${alignments[idx] || (idx === 0 ? "left" : "right")};
+            min-width:0;
+            overflow-wrap:anywhere;
+          ">${escapeHtml(header)}</div>
+        `).join("");
+        const rowHtml = rows.length
+          ? rows.map((row, rowIdx) => `
+              <div style="
+                display:grid;
+                grid-template-columns:${template};
+                gap:0;
+                border-top:1px solid var(--border);
+              ">
+                ${row.map((cell, colIdx) => `
+                  <div style="
+                    padding:8px 10px;
+                    text-align:${alignments[colIdx] || (colIdx === 0 ? "left" : "right")};
+                    font-variant-numeric: tabular-nums;
+                    color:#0f172a;
+                    min-width:0;
+                    overflow-wrap:anywhere;
+                  ">${cell}</div>
+                `).join("")}
+              </div>
+            `).join("")
+          : `<div style="grid-column:1 / -1; padding:10px; border-top:1px solid var(--border); color:#64748b;">${escapeHtml(emptyMessage)}</div>`;
+        return `
+          <div style="border:1px solid var(--border); border-radius:12px; overflow:hidden; background:#fff;">
+            <div style="display:grid; grid-template-columns:${template}; gap:0; background:#f8fafc;">
+              ${headerHtml}
+            </div>
+            <div>
+              ${rowHtml}
+            </div>
+          </div>
+        `;
+      }
+
+      function formatWatchlistTimestamp(raw) {
+        if (!raw) return "";
+        try {
+          const dt = new Date(raw);
+          if (Number.isNaN(dt.getTime())) return "";
+          return dt.toLocaleString([], {
+            month: "short",
+            day: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+          });
+        } catch (_) {
+          return "";
+        }
+      }
+
+      function renderWatchlistSyncStatus(payload) {
+        const status = String(payload?.status || "ready");
+        const tickersConsidered = Number(payload?.tickers_considered ?? 0);
+        const loadedCount = Number(payload?.loaded_count ?? 0);
+        const errors = Array.isArray(payload?.errors) ? payload.errors : [];
+        const processedCount = Math.min(tickersConsidered, Math.max(0, loadedCount + errors.length));
+        const remainingCount = Math.max(0, tickersConsidered - processedCount);
+        const progressPct = tickersConsidered > 0 ? Math.round((processedCount / tickersConsidered) * 100) : 0;
+        const lastTicker = String(payload?.last_ticker || "");
+        const scanMode = String(payload?.scan_mode || "interactive");
+        const delaySec = Number(payload?.delay_sec || 0);
+        const completedAt = formatWatchlistTimestamp(payload?.completed_at);
+        const startedAt = formatWatchlistTimestamp(payload?.started_at);
+
+        let title = "Watch list sync complete";
+        let tone = "color:#166534; background:#f0fdf4; border:1px solid #bbf7d0;";
+        let detail = completedAt
+          ? `Finished ${escapeHtml(completedAt)}. Processed ${escapeHtml(String(processedCount))} of ${escapeHtml(String(tickersConsidered))} ticker(s).`
+          : `Processed ${escapeHtml(String(processedCount))} of ${escapeHtml(String(tickersConsidered))} ticker(s).`;
+
+        if (status === "running") {
+          const paceText = delaySec >= 50
+            ? "Background pace is about 1 ticker per minute."
+            : `Current pace is about 1 ticker every ${escapeHtml(String(Math.max(1, Math.round(delaySec))))} second(s).`;
+          title = scanMode === "background" ? "Background sync is still running" : "Watch list refresh is still running";
+          tone = "color:#92400e; background:#fffbeb; border:1px solid #fcd34d;";
+          detail = `Processed ${escapeHtml(String(processedCount))} of ${escapeHtml(String(tickersConsidered))} ticker(s) (${escapeHtml(String(progressPct))}%). ${remainingCount > 0 ? `${escapeHtml(String(remainingCount))} remaining.` : ""} ${lastTicker ? `Latest ticker: ${escapeHtml(lastTicker)}.` : ""} ${paceText} You may want to wait for this to finish if you want the full list.`;
+        } else if (status === "failed") {
+          title = "Watch list sync failed";
+          tone = "color:#b42318; background:#fff7f6; border:1px solid #f0c7c2;";
+          detail = `The most recent sync stopped early after processing ${escapeHtml(String(processedCount))} of ${escapeHtml(String(tickersConsidered))} ticker(s). ${startedAt ? `Started ${escapeHtml(startedAt)}.` : ""} Check the error list below.`;
+        }
+
+        return `
+          <div style="margin-bottom:12px; padding:12px 14px; border-radius:12px; ${tone}">
+            <div style="font-weight:700; margin-bottom:4px;">${title}</div>
+            <div style="font-size:13px; line-height:1.45;">${detail}</div>
+          </div>
+        `;
+      }
+
+      function renderWatchlistDialog(payload, errorMessage = "") {
+        if (!watchlistDialogTitle || !watchlistDialogBody) return;
+        watchlistDialogTitle.textContent = "Watch List";
+        const preserveMinimized = watchlistMinimized;
+        if (errorMessage) {
+          watchlistDialogBody.innerHTML = `${getWatchlistControlsHtml()}<div class="meta">${escapeHtml(errorMessage)}</div>`;
+          bindWatchlistControls();
+          setWatchlistMinimized(preserveMinimized);
+          return;
+        }
+        const status = String(payload?.status || "ready");
+        const items = Array.isArray(payload?.items) ? payload.items : [];
+        const errors = Array.isArray(payload?.errors) ? payload.errors : [];
+        const noMatchTickers = Array.isArray(payload?.no_match_tickers) ? payload.no_match_tickers : [];
+        const universeLabel = String(payload?.universe_label || "all tickers across all left-panel categories");
+        const tickersConsidered = Number(payload?.tickers_considered ?? 0);
+        const loadedCount = Number(payload?.loaded_count ?? Math.max(0, tickersConsidered - errors.length));
+        const rows = items.map((item) => [
+          `<button type="button" class="watchlist-link-btn" data-ticker="${escapeHtml(item?.ticker || "")}"><strong>${escapeHtml(item?.ticker || "")}</strong></button>`,
+          (Array.isArray(item?.alerts) ? item.alerts : []).map((a) => `<div style="margin-bottom:6px;">${escapeHtml(a)}</div>`).join(""),
+        ]);
+        const errorHtml = errors.length
+          ? `
+            <div style="margin-top:12px;">
+              <div class="meta" style="margin-bottom:6px;color:#b42318;"><strong>Errors</strong> (${errors.length})</div>
+              <textarea readonly style="width:100%; min-height:140px; resize:vertical; font:12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color:#b42318; background:#fff7f6; border:1px solid #f0c7c2; border-radius:10px; padding:10px;">${escapeHtml(errors.join("\n"))}</textarea>
+            </div>
+          `
+          : "";
+        const noMatchHtml = noMatchTickers.length
+          ? `
+            <div style="margin-top:12px;">
+              <div class="meta" style="margin-bottom:6px;"><strong>Loaded With No Banner</strong> (${noMatchTickers.length})</div>
+              <textarea readonly style="width:100%; min-height:110px; resize:vertical; font:12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color:#475569; background:#f8fafc; border:1px solid var(--border); border-radius:10px; padding:10px;">${escapeHtml(noMatchTickers.join("\n"))}</textarea>
+            </div>
+          `
+          : "";
+        watchlistDialogBody.innerHTML = `
+          ${getWatchlistControlsHtml()}
+          <div class="meta" style="margin-bottom:12px;">
+            Universe: ${escapeHtml(universeLabel)} | Range: ${escapeHtml(getRangeLabel(activeRange))} | Banner logic: current confluence alerts
+          </div>
+          <div style="margin-bottom:12px;">
+            <strong>Summary</strong><br>
+            Considered ${escapeHtml(String(tickersConsidered))} tickers. Loaded successfully: ${escapeHtml(String(loadedCount))}. Watch list matches: ${escapeHtml(String(items.length))}. No-banner tickers: ${escapeHtml(String(noMatchTickers.length))}. Errors: ${escapeHtml(String(errors.length))}.
+          </div>
+          ${renderWatchlistSyncStatus(payload)}
+          <div class="meta" style="margin-bottom:12px;">
+            This list uses the same banner detection logic as the alerts shown above the chart. Loaded successfully means market data was fetched. No-banner tickers loaded correctly but did not meet any current banner condition.
+          </div>
+          <div style="overflow:auto;">
+            ${renderGridBlock(
+              ["minmax(120px, 0.8fr)", "minmax(320px, 2.2fr)"],
+              ["Ticker", "Banner Match"],
+              rows,
+              "No current watch-list matches for this range.",
+              ["left", "left"]
+            )}
+          </div>
+          ${noMatchHtml}
+          ${errorHtml}
+        `;
+        bindWatchlistControls();
+        setWatchlistMinimized(preserveMinimized);
+      }
+
+      async function pollWatchlistStatus(tickers, universeLabel, rangeKey) {
+        stopWatchlistStatusPolling();
+        try {
+          const res = await fetch("/api/watchlist/status", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              tickers,
+              universe_label: universeLabel,
+              range: rangeKey,
+            }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.status === 404) return;
+          renderWatchlistDialog(data, "");
+          if (res.status === 202 || String(data?.status || "") === "running") {
+            watchlistStatusPollTimer = setTimeout(() => pollWatchlistStatus(tickers, universeLabel, rangeKey), WATCHLIST_PREWARM_POLL_MS);
+          }
+        } catch (_) {
+          watchlistStatusPollTimer = setTimeout(() => pollWatchlistStatus(tickers, universeLabel, rangeKey), WATCHLIST_PREWARM_POLL_MS);
+        }
+      }
+
+      async function enqueueWatchlistPrewarm(reason = "startup") {
+        const tickers = getAllLeftCategorySymbols();
+        const universeLabel = "all tickers across all left-panel categories";
+        if (!tickers.length) return;
+        const dayKey = getLocalDayKey();
+        const prewarmKey = `${dayKey}::${activeRange}::${tickers.join(",")}`;
+        if (lastWatchlistPrewarmKey === prewarmKey && lastWatchlistPrewarmDate === dayKey) return;
+        lastWatchlistPrewarmKey = prewarmKey;
+        lastWatchlistPrewarmDate = dayKey;
+        logAction("watchlist_prewarm_request", { reason, tickers: tickers.length, range: activeRange });
+        try {
+          await fetch("/api/watchlist/prewarm", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              tickers,
+              universe_label: universeLabel,
+              range: activeRange,
+            }),
+            keepalive: true,
+          });
+        } catch (_) {
+          // Background prewarm should never interrupt the UI.
+        }
+      }
+
+      async function runWatchlistForLeftPanel(opts = {}) {
+        const tickers = getAllLeftCategorySymbols();
+        const universeLabel = "all tickers across all left-panel categories";
+        if (!watchlistDialog || !watchlistDialogBody || !watchlistDialogTitle) return;
+        if (!tickers.length) {
+          renderWatchlistDialog(null, "No tickers found across the left-panel categories.");
+          watchlistDialog.removeAttribute("hidden");
+          return;
+        }
+        watchlistDialogTitle.textContent = "Watch List";
+        watchlistDialogBody.innerHTML = `${getWatchlistControlsHtml()}<div class="meta">Loading watch list for ${tickers.length} ticker(s)...</div>`;
+        watchlistDialog.removeAttribute("hidden");
+        if (!watchlistDialog.style.left && !watchlistDialog.style.top) {
+          watchlistDialog.style.left = `${Math.max(24, Math.round((window.innerWidth - Math.min(860, window.innerWidth - 40)) / 2))}px`;
+          watchlistDialog.style.top = "96px";
+          watchlistDialog.style.transform = "none";
+        }
+        clampFloatingDialogToViewport(watchlistDialog);
+        setWatchlistMinimized(false);
+        bindWatchlistControls();
+        stopWatchlistStatusPolling();
+        const forceRefresh = !!opts?.forceRefresh;
+        const retryErrors = !!opts?.retryErrors && !forceRefresh;
+        logAction("watchlist_request", {
+          tickers,
+          universe: universeLabel,
+          range: activeRange,
+          force_refresh: forceRefresh,
+          retry_errors: retryErrors,
+        });
+        try {
+          const res = await fetch("/api/watchlist", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              tickers,
+              universe_label: universeLabel,
+              range: activeRange,
+              force_refresh: forceRefresh,
+              retry_errors: retryErrors,
+              interactive: true,
+            }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.status === 202 || String(data?.status || "") === "running") {
+            renderWatchlistDialog(data, "");
+            watchlistStatusPollTimer = setTimeout(() => pollWatchlistStatus(tickers, universeLabel, activeRange), WATCHLIST_PREWARM_POLL_MS);
+            return;
+          }
+          if (!res.ok) {
+            throw new Error(data?.error || `Watch list failed (${res.status})`);
+          }
+          renderWatchlistDialog(data, "");
+          logAction("watchlist_success", {
+            tickers_considered: Number(data?.tickers_considered || tickers.length),
+            matches: Array.isArray(data?.items) ? data.items.length : 0,
+            errors: Array.isArray(data?.errors) ? data.errors.length : 0,
+            range: activeRange,
+          });
+        } catch (err) {
+          renderWatchlistDialog(null, err?.message || "Watch list failed.");
+          logAction("watchlist_failed", {
+            range: activeRange,
+            error: err?.message || "Watch list failed.",
           });
         }
       }
@@ -4322,6 +5405,7 @@
         newsDialogTitle.textContent = `${ticker} News`;
         newsDialogBody.innerHTML = `<div class="meta">Loading recent news for ${escapeHtml(ticker)}...</div>`;
         newsDialog.removeAttribute("hidden");
+        setNewsDialogMinimized(false);
         if (!newsDialog.style.left && !newsDialog.style.top) {
           newsDialog.style.left = `${Math.max(24, Math.round((window.innerWidth - Math.min(720, window.innerWidth - 40)) / 2))}px`;
           newsDialog.style.top = "96px";
@@ -5645,6 +6729,121 @@
           .filter(Boolean);
       }
 
+      function detectBuyerSignals(points) {
+        const src = Array.isArray(points) ? points : [];
+        if (src.length < 20) return [];
+        const strongBullish = new Set([
+          "bullish_engulfing",
+          "hammer",
+          "morning_star",
+          "piercing_line",
+          "dragonfly_doji",
+          "tweezer_bottom",
+          "three_white_soldiers",
+        ]);
+        const patternMap = new Map(
+          detectCandlestickPatterns(src)
+            .filter((p) => p && p.patternBias === "bullish" && strongBullish.has(String(p.patternKey || "")))
+            .map((p) => [String(p.x), p])
+        );
+        if (!patternMap.size) return [];
+        const volumes = src.map((pt) => Number(pt?.volume || 0));
+        return src.map((pt, idx) => {
+          const pattern = patternMap.get(String(pt?.t || ""));
+          if (!pattern) return null;
+          const stats = getCandleStats(pt);
+          if (!stats) return null;
+          const start = Math.max(0, idx - 19);
+          const window = volumes.slice(start, idx + 1).filter((v) => Number.isFinite(v));
+          const avgVol = window.length ? (window.reduce((acc, v) => acc + v, 0) / window.length) : 0;
+          const volumeNow = Number(pt?.volume || 0);
+          const volumeConfirm = avgVol > 0 ? volumeNow >= avgVol : volumeNow > 0;
+          const priceConfirm = stats.close >= stats.open || stats.lower >= (stats.body * 2);
+          if (!volumeConfirm || !priceConfirm) return null;
+          return {
+            x: pt.t,
+            y: stats.low - (stats.range * 0.22),
+            open: pt.open,
+            high: pt.high,
+            low: pt.low,
+            close: pt.close,
+            volume: pt.volume,
+            ticker: pattern.ticker,
+            patternBias: "bullish",
+            patternName: "Buyer Signal",
+            patternMeaning: `${pattern.patternName || "Bullish pattern"} with volume confirmation. This marks a stronger bullish reversal/accumulation setup than a raw candle pattern alone.`,
+            signalKind: "buyer_signal",
+            sourcePattern: pattern.patternName || "",
+          };
+        }).filter(Boolean);
+      }
+
+      function detectSellerSignals(points) {
+        const src = Array.isArray(points) ? points : [];
+        if (src.length < 20) return [];
+        const strongBearish = new Set([
+          "bearish_engulfing",
+          "shooting_star",
+          "evening_star",
+          "gravestone_doji",
+          "dark_cloud_cover",
+          "hanging_man",
+          "tweezer_top",
+          "three_black_crows",
+        ]);
+        const patternMap = new Map(
+          detectCandlestickPatterns(src)
+            .filter((p) => p && p.patternBias === "bearish" && strongBearish.has(String(p.patternKey || "")))
+            .map((p) => [String(p.x), p])
+        );
+        const volumes = src.map((pt) => Number(pt?.volume || 0));
+        return src.map((pt, idx) => {
+          if (idx < 10) return null;
+          const stats = getCandleStats(pt);
+          if (!stats) return null;
+          const closeNow = Number(pt?.close);
+          const close5 = Number(src[idx - 5]?.close);
+          if (!Number.isFinite(closeNow) || !Number.isFinite(close5) || close5 <= 0) return null;
+          const priceGainPct = ((closeNow / close5) - 1) * 100;
+          if (priceGainPct < 1.5) return null;
+
+          const recentVolWindow = volumes.slice(Math.max(0, idx - 4), idx + 1).filter((v) => Number.isFinite(v) && v > 0);
+          const priorVolWindow = volumes.slice(Math.max(0, idx - 9), Math.max(0, idx - 4)).filter((v) => Number.isFinite(v) && v > 0);
+          if (recentVolWindow.length < 3 || priorVolWindow.length < 3) return null;
+          const avgRecentVol = recentVolWindow.reduce((acc, v) => acc + v, 0) / recentVolWindow.length;
+          const avgPriorVol = priorVolWindow.reduce((acc, v) => acc + v, 0) / priorVolWindow.length;
+          if (!(avgPriorVol > 0) || avgRecentVol > avgPriorVol * 0.9) return null;
+
+          const upperWickPct = stats.upper / stats.range;
+          const closeLocation = (stats.close - stats.low) / stats.range;
+          const recentHighs = src.slice(Math.max(0, idx - 9), idx + 1)
+            .map((row) => Number(row?.high))
+            .filter((v) => Number.isFinite(v));
+          const atLocalHigh = recentHighs.length ? stats.high >= (Math.max(...recentHighs) * 0.985) : false;
+          const bearishPattern = patternMap.get(String(pt?.t || ""));
+          const rejectionShape = upperWickPct >= 0.33 && closeLocation <= 0.58;
+          const bearishClose = stats.close <= stats.open;
+          if (!bearishPattern && !rejectionShape && !bearishClose) return null;
+          if (!atLocalHigh && !bearishPattern) return null;
+
+          const sourceLabel = bearishPattern?.patternName || (rejectionShape ? "bearish rejection candle" : "weak close");
+          return {
+            x: pt.t,
+            y: stats.high + (stats.range * 0.22),
+            open: pt.open,
+            high: pt.high,
+            low: pt.low,
+            close: pt.close,
+            volume: pt.volume,
+            patternBias: "bearish",
+            patternName: "Seller Signal",
+            patternMeaning: `Price rose ${priceGainPct.toFixed(1)}% over the recent swing while average volume faded versus the prior window. That can signal weakening sponsorship or distribution, especially when paired with ${sourceLabel}. This is a take-profit / wait-for-pullback warning, not a guaranteed top.`,
+            signalKind: "seller_signal",
+            sourcePattern: bearishPattern?.patternName || "",
+          };
+        }).filter(Boolean);
+      }
+
       function getTrendStateLabel(state) {
         const s = String(state || "neutral");
         if (s === "bullish") return "Bullish";
@@ -5828,21 +7027,25 @@
         if (!hintExplainBodyCurrent || !hintExplainBodyPrediction) return;
         const selected = getSelectedSymbols();
         if (selected.length !== 1) {
+          resetExplainChat(null);
           setExplainBodyText("Select exactly one ticker to generate AI explanation.");
           return;
         }
         const payload = latestPayloadByTicker[selected[0]];
         if (!payload || !Array.isArray(payload.points) || payload.points.length === 0 || !priceChart) {
+          resetExplainChat(null);
           setExplainBodyText("No chart data available for explanation.");
           return;
         }
 
         const reqSeq = ++explainRequestSeq;
+        resetExplainChat(null);
         setExplainBodyText("Generating AI explanation for visible window...");
         if (aiExplainBtn) { aiExplainBtn.disabled = true; aiExplainBtn.textContent = "Explaining..."; }
 
         const metrics = buildExplainMetrics(payload);
         if (!metrics) {
+          resetExplainChat(null);
           setExplainBodyText("Unable to read current chart window. Try resetting zoom and retry.");
           return;
         }
@@ -5882,15 +7085,28 @@
             const msg = [out.error || "Explain request failed.", out.hint || "", out.detail || ""]
               .filter(Boolean)
               .join(" ");
+            resetExplainChat(null);
             setExplainBodyText(msg || "Explain request failed.");
             return;
           }
-          setExplainBodyText(String(out.explanation || "").trim() || "No explanation returned.", {
+          const explanationText = String(out.explanation || "").trim() || "No explanation returned.";
+          setExplainBodyText(explanationText, {
             switchToPrediction: true,
             localForecast: out.local_forecast || null,
           });
+          const parts = splitExplainText(explanationText);
+          resetExplainChat({
+            ticker: payload.ticker,
+            range: activeRange,
+            scale: resolvedScaleMode,
+            currentRead: parts.current || explanationText,
+            nextOutlook: parts.prediction || explanationText,
+            localForecast: out.local_forecast || null,
+            tomorrowUpContext: out.tomorrow_up_context || null,
+          });
         } catch (err) {
           if (reqSeq !== explainRequestSeq) return;
+          resetExplainChat(null);
           setExplainBodyText(`Explain request failed: ${err?.message || err}`);
         } finally {
           if (aiExplainBtn) { aiExplainBtn.disabled = false; aiExplainBtn.textContent = "Explain"; }
@@ -5952,11 +7168,67 @@
         return out;
       }
 
+      function getHistoryFetchMode() {
+        return chartTypeMode === "candles" ? "candles" : "line";
+      }
+
+      function withGapMode(points, rangeKey) {
+        if (compressSessions) return Array.isArray(points) ? points : [];
+        return breakSeriesOnGaps(points, rangeKey);
+      }
+
+      function buildRegressionSeries(points, baseClose) {
+        const src = Array.isArray(points) ? points : [];
+        if (src.length < 2) return [];
+        let sumX = 0;
+        let sumY = 0;
+        let sumXY = 0;
+        let sumXX = 0;
+        let count = 0;
+        src.forEach((pt, idx) => {
+          const y = Number(pt?.close);
+          if (!Number.isFinite(y)) return;
+          const x = count;
+          count += 1;
+          sumX += x;
+          sumY += y;
+          sumXY += x * y;
+          sumXX += x * x;
+        });
+        if (count < 2) return [];
+        const denom = (count * sumXX) - (sumX * sumX);
+        if (!Number.isFinite(denom) || Math.abs(denom) < 1e-12) return [];
+        const slope = ((count * sumXY) - (sumX * sumY)) / denom;
+        const intercept = (sumY - (slope * sumX)) / count;
+        let fittedIdx = 0;
+        return src.map((pt) => {
+          const rawClose = Number(pt?.close);
+          if (!Number.isFinite(rawClose)) return null;
+          const rawFit = intercept + (slope * fittedIdx);
+          fittedIdx += 1;
+          let y = rawFit;
+          if (resolvedScaleMode === "percent" && Number(baseClose) > 0) {
+            y = ((rawFit / Number(baseClose)) - 1) * 100;
+          }
+          return { x: pt.t, y };
+        }).filter(Boolean);
+      }
+
       async function fetchTickerData(symbol, forceRefresh = false) {
         try {
+          const fetchMode = getHistoryFetchMode();
+          const cacheKey = `${activeRange}::${fetchMode}`;
+          if (!forceRefresh) {
+            const rangeCache = payloadCacheByRange[cacheKey] || {};
+            const cached = rangeCache[symbol];
+            if (cached && Array.isArray(cached.points) && cached.points.length) {
+              return cached;
+            }
+          }
           const refreshPart = forceRefresh ? "&refresh=1" : "";
+          const chartTypePart = `&chart_type=${encodeURIComponent(fetchMode)}`;
           const res = await fetch(
-            `/api/history?ticker=${encodeURIComponent(symbol)}&range=${encodeURIComponent(activeRange)}${refreshPart}`
+            `/api/history?ticker=${encodeURIComponent(symbol)}&range=${encodeURIComponent(activeRange)}${chartTypePart}${refreshPart}`
           );
           const payload = await res.json();
           if (!res.ok) {
@@ -5964,6 +7236,10 @@
               .filter(Boolean)
               .join(" | ");
             throw new Error(`${symbol}: ${detail}`);
+          }
+          if (payload && payload.ticker && Array.isArray(payload.points) && payload.points.length) {
+            if (!payloadCacheByRange[cacheKey]) payloadCacheByRange[cacheKey] = {};
+            payloadCacheByRange[cacheKey][payload.ticker] = payload;
           }
           return payload;
         } catch (err) {
@@ -6027,8 +7303,8 @@
               if (Number.isFinite(lo)) yValuesForLock.push(lo);
             });
           }
-          const displaySeries = breakSeriesOnGaps(series, activeRange);
-          const priceGapConnectors = buildGapConnectorSeries(series, activeRange);
+          const displaySeries = withGapMode(series, activeRange);
+          const priceGapConnectors = compressSessions ? [] : buildGapConnectorSeries(series, activeRange);
 
           datasets.push({
             type: "bar",
@@ -6072,10 +7348,12 @@
               order: 2,
             });
 
-            const patternMarkers = detectCandlestickPatterns(p.points).map((marker) => ({
-              ...marker,
-              ticker: p.ticker,
-            }));
+            const patternMarkers = showPatterns
+              ? detectCandlestickPatterns(p.points).map((marker) => ({
+                  ...marker,
+                  ticker: p.ticker,
+                }))
+              : [];
             if (patternMarkers.length > 0) {
               datasets.push({
                 type: "scatter",
@@ -6099,6 +7377,66 @@
                 isPatternMarker: true,
               });
               patternMarkers.forEach((pt) => {
+                const yv = Number(pt?.y);
+                if (Number.isFinite(yv)) yValuesForLock.push(yv);
+              });
+            }
+            const buyerSignals = showBuyerSignals
+              ? detectBuyerSignals(p.points).map((marker) => ({
+                  ...marker,
+                  ticker: p.ticker,
+                }))
+              : [];
+            if (buyerSignals.length > 0) {
+              datasets.push({
+                type: "scatter",
+                label: `${p.ticker} buyer-signals`,
+                data: buyerSignals,
+                yAxisID: "y",
+                order: 6,
+                showLine: false,
+                borderColor: "#16a34a",
+                backgroundColor: "#16a34a",
+                pointStyle: "triangle",
+                pointRotation: 0,
+                pointRadius: 7,
+                pointHoverRadius: 9,
+                pointHitRadius: 18,
+                pointBorderWidth: 1,
+                isPatternMarker: true,
+                isBuyerSignalMarker: true,
+              });
+              buyerSignals.forEach((pt) => {
+                const yv = Number(pt?.y);
+                if (Number.isFinite(yv)) yValuesForLock.push(yv);
+              });
+            }
+            const sellerSignals = showSellerSignals
+              ? detectSellerSignals(p.points).map((marker) => ({
+                  ...marker,
+                  ticker: p.ticker,
+                }))
+              : [];
+            if (sellerSignals.length > 0) {
+              datasets.push({
+                type: "scatter",
+                label: `${p.ticker} seller-signals`,
+                data: sellerSignals,
+                yAxisID: "y",
+                order: 6,
+                showLine: false,
+                borderColor: "#dc2626",
+                backgroundColor: "#dc2626",
+                pointStyle: "triangle",
+                pointRotation: 180,
+                pointRadius: 7,
+                pointHoverRadius: 9,
+                pointHitRadius: 18,
+                pointBorderWidth: 1,
+                isPatternMarker: true,
+                isSellerSignalMarker: true,
+              });
+              sellerSignals.forEach((pt) => {
                 const yv = Number(pt?.y);
                 if (Number.isFinite(yv)) yValuesForLock.push(yv);
               });
@@ -6151,7 +7489,7 @@
             });
             datasets.push({
               label: `${p.ticker} upper`,
-              data: breakSeriesOnGaps(bands.upper, activeRange),
+              data: withGapMode(bands.upper, activeRange),
               yAxisID: "y",
               borderColor: "rgba(100, 116, 139, 0.72)",
               borderDash: [4, 4],
@@ -6166,7 +7504,7 @@
             });
             datasets.push({
               label: `${p.ticker} lower`,
-              data: breakSeriesOnGaps(bands.lower, activeRange),
+              data: withGapMode(bands.lower, activeRange),
               yAxisID: "y",
               borderColor: "rgba(100, 116, 139, 0.72)",
               borderDash: [4, 4],
@@ -6215,7 +7553,7 @@
             });
             datasets.push({
               label: `${p.ticker} ${style.label}`,
-              data: breakSeriesOnGaps(maSeries, activeRange),
+                data: withGapMode(maSeries, activeRange),
               yAxisID: "y",
               borderColor: style.color,
               borderWidth: 1.5,
@@ -6247,6 +7585,31 @@
             }
           });
 
+          if (showRegression) {
+            const regressionSeries = buildRegressionSeries(p.points, baseClose);
+            if (regressionSeries.length > 0) {
+              regressionSeries.forEach((pt) => {
+                const yv = Number(pt?.y);
+                if (Number.isFinite(yv)) yValuesForLock.push(yv);
+              });
+              datasets.push({
+                label: `${p.ticker} Regression`,
+              data: withGapMode(regressionSeries, activeRange),
+                yAxisID: "y",
+                borderColor: "#0f172a",
+                borderWidth: 1.6,
+                borderDash: [10, 4],
+                fill: false,
+                tension: 0,
+                order: 3,
+                pointRadius: 0,
+                pointHoverRadius: 0,
+                pointHitRadius: 0,
+                isOverlay: true,
+              });
+            }
+          }
+
           if (showRsi) {
             const normalizedRsi = normalizeRsiSeries(buildRsiSeries(p.points, 14), series);
             if (normalizedRsi.length > 0) {
@@ -6256,7 +7619,7 @@
               });
               datasets.push({
                 label: `${p.ticker} RSI (norm)`,
-                data: breakSeriesOnGaps(normalizedRsi, activeRange),
+                data: withGapMode(normalizedRsi, activeRange),
                 yAxisID: "y",
                 borderColor: RSI_COLORS[idx % RSI_COLORS.length],
                 borderWidth: 2,
@@ -6323,7 +7686,7 @@
               });
               datasets.push({
                 label: `${p.ticker} MACD`,
-                data: breakSeriesOnGaps(normalizedMacd, activeRange),
+                data: withGapMode(normalizedMacd, activeRange),
                 yAxisID: "y",
                 borderColor: MACD_COLORS[idx % MACD_COLORS.length],
                 borderWidth: 1.6,
@@ -6343,7 +7706,7 @@
               });
               datasets.push({
                 label: `${p.ticker} MACD signal`,
-                data: breakSeriesOnGaps(normalizedSignal, activeRange),
+                data: withGapMode(normalizedSignal, activeRange),
                 yAxisID: "y",
                 borderColor: MACD_SIGNAL_COLORS[idx % MACD_SIGNAL_COLORS.length],
                 borderDash: [8, 4],
@@ -6578,7 +7941,13 @@
         const fulfilled = results.filter((r) => r.status === "fulfilled").map((r) => r.value);
         latestPayloadByTicker = {};
         fulfilled.forEach((p) => {
-          if (p && p.ticker) latestPayloadByTicker[p.ticker] = p;
+          if (p && p.ticker) {
+            latestPayloadByTicker[p.ticker] = p;
+            if (Array.isArray(p.points) && p.points.length) {
+              if (!payloadCacheByRange[activeRange]) payloadCacheByRange[activeRange] = {};
+              payloadCacheByRange[activeRange][p.ticker] = p;
+            }
+          }
         });
         renderHoldingsSummary();
         const nonEmpty = fulfilled.filter((p) => Array.isArray(p.points) && p.points.length > 0);
@@ -6616,7 +7985,8 @@
               })
               .join(" | ");
 
-        meta.textContent = `range: ${getRangeLabel(activeRange)} | scale: ${resolvedScaleMode} | source: twelve_data | loaded ${nonEmpty.length}/${selected.length} | ${summary}`;
+        const sourceLabel = (nonEmpty[0]?.source || latestPayloadByTicker[nonEmpty[0]?.ticker || ""]?.source || appConfig.market_data_source || "twelve_data");
+        meta.textContent = `range: ${getRangeLabel(activeRange)} | scale: ${resolvedScaleMode} | source: ${sourceLabel} | loaded ${nonEmpty.length}/${selected.length} | ${summary}`;
         const skipped = [
           ...emptyTickers.map((t) => `${t}: no data for selected range`),
           ...failures,
@@ -6697,6 +8067,7 @@
           setActiveRange(btn.dataset.range);
           delete viewportByRange[activeRange];
           loadData(false, { preserveViewport: false });
+          enqueueWatchlistPrewarm("range_change");
         });
       });
 
@@ -6712,13 +8083,6 @@
           ev.stopPropagation();
           openRowActionsMenu(ev.clientX, ev.clientY, [
             {
-              label: "Save Holdings Layout",
-              onClick: () => {
-                logAction("center_menu_save_holdings_click", { portfolio_count: importedPortfolios.length });
-                saveImportedPortfoliosToServer();
-              },
-            },
-            {
               label: "Config",
               onClick: () => openConfigDialog(),
             },
@@ -6731,18 +8095,21 @@
               onClick: () => runScannerForLeftPanel(),
             },
             {
-              label: `Auto refresh (5m): ${autoRefreshEnabled ? "On" : "Off"}`,
-              onClick: () => setAutoRefreshEnabled(!autoRefreshEnabled),
-            },
-            {
-              label: `News popup: ${newsPopupEnabled ? "On" : "Off"}`,
-              onClick: () => setNewsPopupEnabled(!newsPopupEnabled),
+              label: "Watch List",
+              onClick: () => runWatchlistForLeftPanel(),
             },
             {
               label: "ClearAll",
               onClick: () => clearAllSelections(),
             },
           ]);
+        });
+      }
+
+      if (portfolioSaveBtn) {
+        portfolioSaveBtn.addEventListener("click", () => {
+          logAction("portfolio_view_save_click", { portfolio_count: importedPortfolios.length });
+          saveImportedPortfoliosToServer();
         });
       }
 
@@ -6828,6 +8195,14 @@
         chartTypeToggleEl.addEventListener("click", () => {
           const nextMode = chartTypeMode === "candles" ? "line" : "candles";
           setChartTypeMode(nextMode);
+          loadData(false, { preserveViewport: false });
+        });
+      }
+
+      if (gapModeToggleEl) {
+        gapModeToggleEl.addEventListener("click", () => {
+          const nextMode = compressSessions ? "real" : "compressed";
+          setGapMode(nextMode);
           const selectedSymbols = getSelectedSymbols();
           const payloads = selectedSymbols
             .map((symbol) => latestPayloadByTicker[symbol])
@@ -6860,9 +8235,18 @@
           }
           else {
             rulesHintPopover.removeAttribute("hidden");
+            setHintPopoverMinimized(false);
             explainCurrentChartWindow();
           }
         });
+
+        if (rulesHintToggleBtn) {
+          rulesHintToggleBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            setHintPopoverMinimized(!hintPopoverMinimized);
+            logAction("hint_popover_toggle", { minimized: hintPopoverMinimized });
+          });
+        }
 
         if (rulesHintCloseBtn) {
           rulesHintCloseBtn.addEventListener("click", () => {
@@ -6874,6 +8258,7 @@
         if (rulesHintHeader) {
           rulesHintHeader.addEventListener("mousedown", (e) => {
             if (e.button !== 0) return;
+            if (rulesHintToggleBtn && rulesHintToggleBtn.contains(e.target)) return;
             if (rulesHintCloseBtn && rulesHintCloseBtn.contains(e.target)) return;
             const rect = rulesHintPopover.getBoundingClientRect();
             hintDragActive = true;
@@ -6916,6 +8301,14 @@
       }
 
       if (newsDialog && newsDialogHeader) {
+        if (newsDialogToggleBtn) {
+          newsDialogToggleBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            setNewsDialogMinimized(!newsDialogMinimized);
+            logAction("ticker_news_dialog_toggle", { minimized: newsDialogMinimized });
+          });
+        }
+
         if (newsDialogCloseBtn) {
           newsDialogCloseBtn.addEventListener("click", () => {
             newsDialog.setAttribute("hidden", "");
@@ -6927,6 +8320,7 @@
 
         newsDialogHeader.addEventListener("mousedown", (e) => {
           if (e.button !== 0) return;
+          if (newsDialogToggleBtn && newsDialogToggleBtn.contains(e.target)) return;
           if (newsDialogCloseBtn && newsDialogCloseBtn.contains(e.target)) return;
           const rect = newsDialog.getBoundingClientRect();
           newsDragActive = true;
@@ -6970,6 +8364,7 @@
           backtestDialogCloseBtn.addEventListener("click", () => {
             backtestDialog.setAttribute("hidden", "");
             backtestDragActive = false;
+            backtestResizeActive = false;
             logAction("backtest_dialog_closed", { reason: "close_button" });
           });
         }
@@ -6989,6 +8384,20 @@
         });
 
         document.addEventListener("mousemove", (e) => {
+          if (backtestResizeActive) {
+            const nextWidth = Math.min(
+              window.innerWidth - 16,
+              Math.max(560, backtestResizeStartWidth + (e.clientX - backtestResizeStartX))
+            );
+            const nextHeight = Math.min(
+              window.innerHeight - 16,
+              Math.max(320, backtestResizeStartHeight + (e.clientY - backtestResizeStartY))
+            );
+            backtestDialog.style.width = `${Math.round(nextWidth)}px`;
+            backtestDialog.style.height = `${Math.round(nextHeight)}px`;
+            clampFloatingDialogToViewport(backtestDialog);
+            return;
+          }
           if (!backtestDragActive) return;
           const maxLeft = Math.max(8, window.innerWidth - backtestDialog.offsetWidth - 8);
           const maxTop = Math.max(8, window.innerHeight - backtestDialog.offsetHeight - 8);
@@ -7001,6 +8410,14 @@
         });
 
         document.addEventListener("mouseup", () => {
+          if (backtestResizeActive) {
+            backtestResizeActive = false;
+            logAction("backtest_dialog_resize_end", {
+              width: backtestDialog.style.width || "",
+              height: backtestDialog.style.height || "",
+            });
+            return;
+          }
           if (!backtestDragActive) return;
           backtestDragActive = false;
           logAction("backtest_dialog_drag_end", {
@@ -7008,6 +8425,21 @@
             top: backtestDialog.style.top || "",
           });
         });
+
+        if (backtestDialogResizeGrip) {
+          backtestDialogResizeGrip.addEventListener("mousedown", (e) => {
+            if (e.button !== 0) return;
+            const rect = backtestDialog.getBoundingClientRect();
+            backtestResizeActive = true;
+            backtestDragActive = false;
+            backtestResizeStartX = e.clientX;
+            backtestResizeStartY = e.clientY;
+            backtestResizeStartWidth = rect.width;
+            backtestResizeStartHeight = rect.height;
+            e.preventDefault();
+            e.stopPropagation();
+          });
+        }
 
         window.addEventListener("resize", () => {
           clampFloatingDialogToViewport(backtestDialog);
@@ -7063,6 +8495,158 @@
         });
       }
 
+      if (apiUsageDialog && apiUsageDialogHeader) {
+        if (apiUsageDialogCloseBtn) {
+          apiUsageDialogCloseBtn.addEventListener("click", () => {
+            apiUsageDialog.setAttribute("hidden", "");
+            apiUsageDragActive = false;
+            logAction("api_usage_dialog_closed", { reason: "close_button" });
+          });
+        }
+
+        apiUsageDialogHeader.addEventListener("mousedown", (e) => {
+          if (e.button !== 0) return;
+          if (apiUsageDialogCloseBtn && apiUsageDialogCloseBtn.contains(e.target)) return;
+          const rect = apiUsageDialog.getBoundingClientRect();
+          apiUsageDragActive = true;
+          apiUsageDragOffsetX = e.clientX - rect.left;
+          apiUsageDragOffsetY = e.clientY - rect.top;
+          apiUsageDialog.style.left = `${Math.round(rect.left)}px`;
+          apiUsageDialog.style.top = `${Math.round(rect.top)}px`;
+          apiUsageDialog.style.right = "auto";
+          apiUsageDialog.style.transform = "none";
+          e.preventDefault();
+        });
+
+        document.addEventListener("mousemove", (e) => {
+          if (!apiUsageDragActive) return;
+          const maxLeft = Math.max(8, window.innerWidth - apiUsageDialog.offsetWidth - 8);
+          const maxTop = Math.max(8, window.innerHeight - apiUsageDialog.offsetHeight - 8);
+          const left = Math.min(maxLeft, Math.max(8, e.clientX - apiUsageDragOffsetX));
+          const top = Math.min(maxTop, Math.max(8, e.clientY - apiUsageDragOffsetY));
+          apiUsageDialog.style.left = `${Math.round(left)}px`;
+          apiUsageDialog.style.top = `${Math.round(top)}px`;
+          apiUsageDialog.style.right = "auto";
+          apiUsageDialog.style.transform = "none";
+        });
+
+        document.addEventListener("mouseup", () => {
+          if (!apiUsageDragActive) return;
+          apiUsageDragActive = false;
+          logAction("api_usage_dialog_drag_end", {
+            left: apiUsageDialog.style.left || "",
+            top: apiUsageDialog.style.top || "",
+          });
+        });
+
+        window.addEventListener("resize", () => {
+          clampFloatingDialogToViewport(apiUsageDialog);
+        });
+      }
+
+      if (configDialog && configDialogHeader) {
+        configDialogHeader.addEventListener("mousedown", (e) => {
+          if (e.button !== 0) return;
+          if (configDialogCloseBtn && configDialogCloseBtn.contains(e.target)) return;
+          if (configDialogToggleBtn && configDialogToggleBtn.contains(e.target)) return;
+          const rect = configDialog.getBoundingClientRect();
+          configDragActive = true;
+          configDragOffsetX = e.clientX - rect.left;
+          configDragOffsetY = e.clientY - rect.top;
+          configDialog.style.left = `${Math.round(rect.left)}px`;
+          configDialog.style.top = `${Math.round(rect.top)}px`;
+          configDialog.style.right = "auto";
+          configDialog.style.transform = "none";
+          e.preventDefault();
+        });
+
+        document.addEventListener("mousemove", (e) => {
+          if (!configDragActive) return;
+          const maxLeft = Math.max(8, window.innerWidth - configDialog.offsetWidth - 8);
+          const maxTop = Math.max(8, window.innerHeight - configDialog.offsetHeight - 8);
+          const left = Math.min(maxLeft, Math.max(8, e.clientX - configDragOffsetX));
+          const top = Math.min(maxTop, Math.max(8, e.clientY - configDragOffsetY));
+          configDialog.style.left = `${Math.round(left)}px`;
+          configDialog.style.top = `${Math.round(top)}px`;
+          configDialog.style.right = "auto";
+          configDialog.style.transform = "none";
+        });
+
+        document.addEventListener("mouseup", () => {
+          if (!configDragActive) return;
+          configDragActive = false;
+        });
+
+        window.addEventListener("resize", () => {
+          clampFloatingDialogToViewport(configDialog);
+        });
+      }
+
+      if (watchlistDialog && watchlistDialogHeader) {
+        if (watchlistDialogBody) {
+          watchlistDialogBody.addEventListener("click", (e) => {
+            const btn = e.target instanceof Element ? e.target.closest(".watchlist-link-btn") : null;
+            if (!btn) return;
+            const ticker = btn.getAttribute("data-ticker") || "";
+            setWatchlistMinimized(true);
+            logAction("watchlist_ticker_focus", { ticker, range: activeRange });
+            focusTickerFromWatchlist(ticker);
+          });
+        }
+        if (watchlistDialogCloseBtn) {
+          watchlistDialogCloseBtn.addEventListener("click", () => {
+            stopWatchlistStatusPolling();
+            watchlistDialog.setAttribute("hidden", "");
+            watchlistDragActive = false;
+            logAction("watchlist_dialog_closed", {});
+          });
+        }
+        if (watchlistDialogToggleBtn) {
+          watchlistDialogToggleBtn.addEventListener("click", () => {
+            setWatchlistMinimized(!watchlistMinimized);
+            clampFloatingDialogToViewport(watchlistDialog);
+            logAction("watchlist_dialog_toggle", { minimized: watchlistMinimized });
+          });
+        }
+        watchlistDialogHeader.addEventListener("mousedown", (e) => {
+          if (e.button !== 0) return;
+          if (watchlistDialogCloseBtn && watchlistDialogCloseBtn.contains(e.target)) return;
+          if (watchlistDialogToggleBtn && watchlistDialogToggleBtn.contains(e.target)) return;
+          const rect = watchlistDialog.getBoundingClientRect();
+          watchlistDragActive = true;
+          watchlistDragOffsetX = e.clientX - rect.left;
+          watchlistDragOffsetY = e.clientY - rect.top;
+          watchlistDialog.style.left = `${Math.round(rect.left)}px`;
+          watchlistDialog.style.top = `${Math.round(rect.top)}px`;
+          watchlistDialog.style.right = "auto";
+          watchlistDialog.style.transform = "none";
+          e.preventDefault();
+        });
+        document.addEventListener("mousemove", (e) => {
+          if (!watchlistDragActive) return;
+          const maxLeft = Math.max(8, window.innerWidth - watchlistDialog.offsetWidth - 8);
+          const maxTop = Math.max(8, window.innerHeight - watchlistDialog.offsetHeight - 8);
+          const left = Math.min(maxLeft, Math.max(8, e.clientX - watchlistDragOffsetX));
+          const top = Math.min(maxTop, Math.max(8, e.clientY - watchlistDragOffsetY));
+          watchlistDialog.style.left = `${Math.round(left)}px`;
+          watchlistDialog.style.top = `${Math.round(top)}px`;
+          watchlistDialog.style.right = "auto";
+          watchlistDialog.style.transform = "none";
+        });
+        document.addEventListener("mouseup", () => {
+          if (!watchlistDragActive) return;
+          watchlistDragActive = false;
+          logAction("watchlist_dialog_drag_end", {
+            left: watchlistDialog.style.left || "",
+            top: watchlistDialog.style.top || "",
+          });
+        });
+        window.addEventListener("resize", () => {
+          if (watchlistDialog.hasAttribute("hidden")) return;
+          clampFloatingDialogToViewport(watchlistDialog);
+        });
+      }
+
       document.addEventListener("keydown", (e) => {
         if (e.key !== "Escape") return;
         if (rulesHintPopover && !rulesHintPopover.hasAttribute("hidden")) {
@@ -7084,6 +8668,21 @@
           scannerDialog.setAttribute("hidden", "");
           scannerDragActive = false;
           logAction("scanner_dialog_closed", { reason: "escape" });
+        }
+        if (watchlistDialog && !watchlistDialog.hasAttribute("hidden")) {
+          stopWatchlistStatusPolling();
+          watchlistDialog.setAttribute("hidden", "");
+          watchlistDragActive = false;
+          logAction("watchlist_dialog_closed", { reason: "escape" });
+        }
+        if (apiUsageDialog && !apiUsageDialog.hasAttribute("hidden")) {
+          apiUsageDialog.setAttribute("hidden", "");
+          apiUsageDragActive = false;
+          logAction("api_usage_dialog_closed", { reason: "escape" });
+        }
+        if (configDialog && !configDialog.hasAttribute("hidden")) {
+          configDialog.setAttribute("hidden", "");
+          configDragActive = false;
         }
       });
 
@@ -7129,14 +8728,81 @@
         });
       }
 
+      if (regressionToggleEl) {
+        regressionToggleEl.addEventListener("change", () => {
+          showRegression = !!regressionToggleEl.checked;
+          const selectedSymbols = getSelectedSymbols();
+          const payloads = selectedSymbols
+            .map((symbol) => latestPayloadByTicker[symbol])
+            .filter((p) => Array.isArray(p?.points) && p.points.length > 0);
+          if (!payloads.length) return;
+          drawChart(payloads);
+          logAction("regression_toggle", { enabled: showRegression });
+        });
+      }
+
+      if (patternToggleEl) {
+        patternToggleEl.addEventListener("change", () => {
+          showPatterns = !!patternToggleEl.checked;
+          if (!showPatterns) hidePatternDetail();
+          const selectedSymbols = getSelectedSymbols();
+          const payloads = selectedSymbols
+            .map((symbol) => latestPayloadByTicker[symbol])
+            .filter((p) => Array.isArray(p?.points) && p.points.length > 0);
+          if (!payloads.length) return;
+          drawChart(payloads);
+          logAction("pattern_toggle", { enabled: showPatterns, chart_type: chartTypeMode });
+        });
+      }
+
+      if (buyerSignalToggleEl) {
+        buyerSignalToggleEl.addEventListener("change", () => {
+          showBuyerSignals = !!buyerSignalToggleEl.checked;
+          if (!showBuyerSignals) hidePatternDetail();
+          const selectedSymbols = getSelectedSymbols();
+          const payloads = selectedSymbols
+            .map((symbol) => latestPayloadByTicker[symbol])
+            .filter((p) => Array.isArray(p?.points) && p.points.length > 0);
+          if (!payloads.length) return;
+          drawChart(payloads);
+          logAction("buyer_signal_toggle", { enabled: showBuyerSignals, chart_type: chartTypeMode });
+        });
+      }
+
+      if (sellerSignalToggleEl) {
+        sellerSignalToggleEl.addEventListener("change", () => {
+          showSellerSignals = !!sellerSignalToggleEl.checked;
+          if (!showSellerSignals) hidePatternDetail();
+          const selectedSymbols = getSelectedSymbols();
+          const payloads = selectedSymbols
+            .map((symbol) => latestPayloadByTicker[symbol])
+            .filter((p) => Array.isArray(p?.points) && p.points.length > 0);
+          if (!payloads.length) return;
+          drawChart(payloads);
+          logAction("seller_signal_toggle", { enabled: showSellerSignals, chart_type: chartTypeMode });
+        });
+      }
+
       if (csvFileInput) {
         csvFileInput.addEventListener("change", () => importCsvFile());
+      }
+
+      if (workspaceTabChartEl) {
+        workspaceTabChartEl.addEventListener("click", () => setWorkspaceTab("chart"));
+      }
+
+      if (workspaceTabPortfolioEl) {
+        workspaceTabPortfolioEl.addEventListener("click", () => setWorkspaceTab("portfolio"));
       }
 
       async function initApp() {
         logAction("app_init_start", {});
         autoRefreshEnabled = localStorage.getItem(AUTO_REFRESH_KEY) === "1";
         startAutoRefreshTimer();
+        setWorkspaceTab(activeWorkspaceTab, { rerenderChart: false, persist: false });
+        setChartTypeMode(chartTypeMode);
+        setBandViewMode(bandViewMode);
+        setGapMode(compressSessions ? "compressed" : "real_gaps");
         loadTickers();
         await loadImportedPortfolios();
         await loadLeftCategories();
@@ -7151,6 +8817,14 @@
         updateSelectedCount();
         syncNewsPopupToSelection("app_init");
         await loadData();
+        setTimeout(() => enqueueWatchlistPrewarm("app_init"), 400);
+        setInterval(() => {
+          const todayKey = getLocalDayKey();
+          if (todayKey !== lastWatchlistPrewarmDate) {
+            lastWatchlistPrewarmKey = "";
+            enqueueWatchlistPrewarm("new_day");
+          }
+        }, 15 * 60 * 1000);
         logAction("app_init_done", {
           saved_tickers: tickers.length,
           imported_portfolios: importedPortfolios.length,

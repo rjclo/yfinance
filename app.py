@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import contextlib
 import hashlib
 import io
 import json
@@ -16,6 +17,7 @@ import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Tuple
@@ -24,7 +26,13 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 from flask import Flask, g, jsonify, render_template, request
 
-from fetch_market_data import diagnose_source_failure, fetch_price_history_by_source
+from fetch_market_data import (
+    diagnose_source_failure,
+    fetch_price_history_by_source,
+    get_upstream_usage_context,
+    reset_upstream_usage_context,
+    set_upstream_usage_context,
+)
 
 app = Flask(__name__)
 
@@ -51,14 +59,23 @@ def _serialize_cached_df(df: pd.DataFrame) -> bytes:
     except Exception:
         return pickle.dumps(df, protocol=pickle.HIGHEST_PROTOCOL)
 
-# Map UI ranges to yfinance period/interval values.
+# Map UI ranges to upstream fetch period/interval values.
 RANGE_MAP: Dict[str, Tuple[str, str]] = {
     "1d": ("1d", "1m"),
-    "1w": ("10d", "5m"),
-    "1m": ("1mo", "15m"),
-    "3m": ("3mo", "1h"),
-    "1y": ("1y", "1d"),
+    "1w": ("20d", "5m"),
+    "1m": ("60d", "15m"),
+    "3m": ("180d", "1h"),
+    "1y": ("2y", "1d"),
     "max": ("max", "1d"),
+}
+
+TRADING_DAY_TARGETS: Dict[str, int | None] = {
+    "1d": 1,
+    "1w": 10,
+    "1m": 21,
+    "3m": 63,
+    "1y": 252,
+    "max": None,
 }
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -71,6 +88,7 @@ LOG_DIR = BASE_DIR / "data" / "logs"
 SERVER_LOG_PATH = LOG_DIR / "server.log"
 CLIENT_ACTION_LOG_PATH = LOG_DIR / "client_actions.jsonl"
 RSI_MONITOR_LOG_PATH = LOG_DIR / "rsi_monitor.jsonl"
+UPSTREAM_API_LOG_PATH = LOG_DIR / "upstream_api_calls.jsonl"
 
 CATEGORY_DIR = BASE_DIR / "data" / "categories"
 CATEGORY_CONFIG_PATH = CATEGORY_DIR / "categories.json"
@@ -79,10 +97,11 @@ AI_SETTINGS_PATH = BASE_DIR / "data" / "ai_settings.json"
 
 CACHE_DIR = BASE_DIR / "data" / "cache"
 CACHE_DB_PATH = CACHE_DIR / "market_data.db"
+WATCHLIST_CACHE_DIR = CACHE_DIR / "watchlist"
 CACHE_MAX_BYTES = 50 * 1024 * 1024  # 50 MB
 CACHE_MAX_AGE_SEC = 7 * 24 * 3600   # 7 days
 MODEL_DIR = BASE_DIR / "data" / "models"
-DAILY_SCANNER_MODEL_VERSION = "lgbm_daily_v2"
+DAILY_SCANNER_MODEL_VERSION = "lgbm_daily_v3"
 
 RSI_MONITOR_INTERVAL_SEC = int(os.getenv("RSI_MONITOR_INTERVAL_SEC", "600"))
 RSI_PERIOD = 14
@@ -105,8 +124,18 @@ _news_cache_lock = threading.Lock()
 _news_cache: dict[str, dict] = {}
 _twelve_meta_cache_lock = threading.Lock()
 _twelve_meta_cache: dict[tuple[str, str], dict] = {}
+_watchlist_cache_lock = threading.Lock()
+_watchlist_cache: dict[str, dict] = {}
+_twelve_rate_limit_lock = threading.Lock()
+_twelve_rate_limit_hits: deque[float] = deque()
+
+WATCHLIST_SCAN_DELAY_SEC = float(os.getenv("WATCHLIST_SCAN_DELAY_SEC", "1.4"))
+WATCHLIST_BACKGROUND_SCAN_DELAY_SEC = float(os.getenv("WATCHLIST_BACKGROUND_SCAN_DELAY_SEC", "60"))
+TWELVE_RATE_LIMIT_PER_MIN = max(1, int(os.getenv("TWELVE_RATE_LIMIT_PER_MIN", "7")))
+TWELVE_RATE_LIMIT_WINDOW_SEC = 60.0
 
 _CONFIG_ENV_KEYS = (
+    "MARKET_DATA_SOURCE",
     "TWELVE_DATA_API_KEY",
     "FINNHUB_API_KEY",
     "OPENAI_API_KEY",
@@ -116,6 +145,11 @@ _CONFIG_ENV_KEYS = (
     "CHART_AI_PROVIDER",
     "CHART_AI_MODEL",
 )
+
+
+def _get_market_data_source() -> str:
+    source = _get_config_value("MARKET_DATA_SOURCE", "twelve_data").strip().lower()
+    return source if source in {"twelve_data"} else "twelve_data"
 
 
 def _parse_dotenv_text(text: str) -> dict[str, str]:
@@ -419,8 +453,32 @@ def _fetch_twelve_json_cached(endpoint: str, symbol: str, params: dict | None = 
     )
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
+            _append_upstream_api_log(
+                {
+                    "ts_utc": datetime.now(timezone.utc).isoformat(),
+                    "provider": "twelve_data",
+                    "endpoint": endpoint,
+                    "symbol": ticker,
+                    "params": query,
+                    "http_status": int(getattr(resp, "status", 200) or 200),
+                    "usage_context": get_upstream_usage_context(),
+                }
+            )
             raw = resp.read().decode("utf-8")
-    except Exception:
+    except Exception as exc:
+        code = getattr(exc, "code", None)
+        _append_upstream_api_log(
+            {
+                "ts_utc": datetime.now(timezone.utc).isoformat(),
+                "provider": "twelve_data",
+                "endpoint": endpoint,
+                "symbol": ticker,
+                "params": query,
+                "http_status": int(code) if isinstance(code, int) else None,
+                "error": exc.__class__.__name__,
+                "usage_context": get_upstream_usage_context(),
+            }
+        )
         return {}
     try:
         payload = json.loads(raw)
@@ -455,10 +513,10 @@ def _build_tomorrow_up_context(ticker: str) -> dict:
     symbol = _sanitize_ticker(ticker)
     if not symbol:
         return {}
-
-    earnings_payload = _fetch_twelve_json_cached("earnings", symbol, ttl_sec=6 * 3600)
-    stats_payload = _fetch_twelve_json_cached("statistics", symbol, ttl_sec=12 * 3600)
-    income_payload = _fetch_twelve_json_cached("income_statement", symbol, {"period": "Quarterly"}, ttl_sec=12 * 3600)
+    with _upstream_usage_scope("ai_explain"):
+        earnings_payload = _fetch_twelve_json_cached("earnings", symbol, ttl_sec=6 * 3600)
+        stats_payload = _fetch_twelve_json_cached("statistics", symbol, ttl_sec=12 * 3600)
+        income_payload = _fetch_twelve_json_cached("income_statement", symbol, {"period": "Quarterly"}, ttl_sec=12 * 3600)
 
     earnings_rows = earnings_payload.get("earnings") if isinstance(earnings_payload.get("earnings"), list) else []
     next_earnings = None
@@ -979,6 +1037,120 @@ def _build_regime_score_from_row(row: pd.Series) -> tuple[float | None, float | 
     return round(score, 0), round(confidence, 0)
 
 
+def _parse_utc_date_series(values) -> pd.Series:
+    return pd.to_datetime(values, utc=True, errors="coerce")
+
+
+def _build_historical_fundamental_frame(ticker: str, work: pd.DataFrame) -> pd.DataFrame:
+    symbol = _sanitize_ticker(ticker)
+    default = pd.DataFrame(
+        index=work.index,
+        data={
+            "days_since_last_earnings": 365.0,
+            "days_to_next_earnings": 90.0,
+            "eps_surprise_pct": 0.0,
+            "eps_surprise_positive": 0.0,
+            "revenue_growth_qoq_pct": 0.0,
+            "revenue_growth_yoy_pct": 0.0,
+            "net_margin_pct": 0.0,
+        },
+    )
+    if not symbol or work.empty:
+        return default
+
+    earnings_payload = _fetch_twelve_json_cached("earnings", symbol, ttl_sec=12 * 3600)
+    income_payload = _fetch_twelve_json_cached("income_statement", symbol, {"period": "Quarterly"}, ttl_sec=12 * 3600)
+
+    earnings_rows = earnings_payload.get("earnings") if isinstance(earnings_payload.get("earnings"), list) else []
+    income_rows = income_payload.get("income_statement") if isinstance(income_payload.get("income_statement"), list) else []
+    if not earnings_rows and not income_rows:
+        return default
+
+    earnings_df = pd.DataFrame([row for row in earnings_rows if isinstance(row, dict)])
+    income_df = pd.DataFrame([row for row in income_rows if isinstance(row, dict)])
+
+    events: list[dict] = []
+    if not earnings_df.empty:
+        earnings_df = earnings_df.copy()
+        earnings_df["announce_date"] = _parse_utc_date_series(earnings_df.get("date"))
+        earnings_df["eps_surprise_pct"] = pd.to_numeric(earnings_df.get("surprise_prc"), errors="coerce")
+        earnings_df = earnings_df.dropna(subset=["announce_date"]).sort_values("announce_date").reset_index(drop=True)
+    if not income_df.empty:
+        income_df = income_df.copy()
+        income_df["fiscal_date_dt"] = _parse_utc_date_series(income_df.get("fiscal_date"))
+        income_df["sales"] = pd.to_numeric(income_df.get("sales"), errors="coerce")
+        income_df["net_income"] = pd.to_numeric(income_df.get("net_income"), errors="coerce")
+        income_df = income_df.dropna(subset=["fiscal_date_dt"]).sort_values("fiscal_date_dt", ascending=False).reset_index(drop=True)
+        income_df["revenue_growth_qoq_pct"] = ((income_df["sales"] / income_df["sales"].shift(-1)) - 1.0) * 100.0
+        income_df["revenue_growth_yoy_pct"] = ((income_df["sales"] / income_df["sales"].shift(-4)) - 1.0) * 100.0
+        income_df["net_margin_pct"] = (income_df["net_income"] / income_df["sales"].replace(0.0, pd.NA)) * 100.0
+
+    if not earnings_df.empty:
+        past_earnings_df = earnings_df[pd.to_numeric(earnings_df.get("eps_actual"), errors="coerce").notna()].copy()
+        past_earnings_df = past_earnings_df.sort_values("announce_date", ascending=False).reset_index(drop=True)
+        pair_count = min(len(past_earnings_df.index), len(income_df.index))
+        for idx in range(pair_count):
+            erow = past_earnings_df.iloc[idx]
+            irow = income_df.iloc[idx] if idx < len(income_df.index) else None
+            events.append(
+                {
+                    "announce_date": erow["announce_date"],
+                    "eps_surprise_pct": _float_or_none(erow.get("eps_surprise_pct")),
+                    "eps_surprise_positive": 1.0 if (_float_or_none(erow.get("eps_surprise_pct")) or 0.0) > 0 else 0.0,
+                    "revenue_growth_qoq_pct": _float_or_none(irow.get("revenue_growth_qoq_pct")) if irow is not None else None,
+                    "revenue_growth_yoy_pct": _float_or_none(irow.get("revenue_growth_yoy_pct")) if irow is not None else None,
+                    "net_margin_pct": _float_or_none(irow.get("net_margin_pct")) if irow is not None else None,
+                }
+            )
+
+    if not events:
+        return default
+
+    event_df = pd.DataFrame(events).dropna(subset=["announce_date"]).sort_values("announce_date").reset_index(drop=True)
+    if event_df.empty:
+        return pd.DataFrame(index=work.index)
+
+    dates = pd.DataFrame({"date": work["date"]}).sort_values("date").reset_index()
+    merged = pd.merge_asof(
+        dates,
+        event_df,
+        left_on="date",
+        right_on="announce_date",
+        direction="backward",
+    )
+    future = pd.merge_asof(
+        dates,
+        event_df[["announce_date"]].rename(columns={"announce_date": "next_announce_date"}).sort_values("next_announce_date"),
+        left_on="date",
+        right_on="next_announce_date",
+        direction="forward",
+    )
+    merged["days_since_last_earnings"] = (merged["date"] - merged["announce_date"]).dt.days
+    merged["days_to_next_earnings"] = (future["next_announce_date"] - merged["date"]).dt.days
+
+    out = merged.set_index("index")[
+        [
+            "days_since_last_earnings",
+            "days_to_next_earnings",
+            "eps_surprise_pct",
+            "eps_surprise_positive",
+            "revenue_growth_qoq_pct",
+            "revenue_growth_yoy_pct",
+            "net_margin_pct",
+        ]
+    ].sort_index()
+    out = out.reindex(work.index)
+    out["days_since_last_earnings"] = pd.to_numeric(out["days_since_last_earnings"], errors="coerce").fillna(365.0).clip(lower=0.0, upper=365.0)
+    out["days_to_next_earnings"] = pd.to_numeric(out["days_to_next_earnings"], errors="coerce").fillna(90.0).clip(lower=0.0, upper=365.0)
+    for col in ("eps_surprise_pct", "revenue_growth_qoq_pct", "revenue_growth_yoy_pct", "net_margin_pct"):
+        out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0.0)
+    out["eps_surprise_positive"] = pd.to_numeric(out["eps_surprise_positive"], errors="coerce").fillna(0.0)
+    for col in default.columns:
+        if col not in out.columns:
+            out[col] = default[col]
+    return out[default.columns]
+
+
 def _build_daily_backtest_frame(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame()
@@ -1077,12 +1249,13 @@ def _build_model_backtest_frame(work: pd.DataFrame, include_target: bool = True)
 
 
 def _build_backtest_benchmark_returns(symbol: str) -> pd.DataFrame:
+    source = _get_market_data_source()
     df, _ = _fetch_price_history_cached(
         ticker=symbol,
         period="3y",
         interval="1d",
         prepost=False,
-        source="twelve_data",
+        source=source,
         ttl_sec=24 * 3600,
         stale_ttl_sec=7 * 24 * 3600,
     )
@@ -1099,12 +1272,13 @@ def _build_backtest_benchmark_returns(symbol: str) -> pd.DataFrame:
 
 
 def _prepare_ticker_model_work(ticker: str) -> tuple[pd.DataFrame, str]:
+    source = _get_market_data_source()
     df, provider_used = _fetch_price_history_cached(
         ticker=ticker,
         period="3y",
         interval="1d",
         prepost=False,
-        source="twelve_data",
+        source=source,
         ttl_sec=24 * 3600,
         stale_ttl_sec=7 * 24 * 3600,
     )
@@ -1176,7 +1350,7 @@ def _run_pooled_backtest(
 
     frames: list[pd.DataFrame] = []
     errors: list[str] = []
-    provider_used = "twelve_data"
+    provider_used = _get_market_data_source()
     feature_cols: list[str] | None = None
     for idx, ticker in enumerate(tickers):
         try:
@@ -1199,13 +1373,14 @@ def _run_pooled_backtest(
 
     model = LGBMClassifier(
         objective="binary",
-        n_estimators=400,
-        max_depth=4,
+        n_estimators=500,
+        max_depth=5,
         learning_rate=0.03,
-        subsample=0.85,
-        colsample_bytree=0.85,
-        reg_lambda=1.5,
-        min_child_samples=25,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        reg_lambda=2.0,
+        min_child_samples=40,
+        num_leaves=31,
         random_state=42,
         n_jobs=4,
         verbosity=-1,
@@ -1285,7 +1460,7 @@ def _run_pooled_backtest(
     recommended_thresholds = None
     viable = [
         item for item in threshold_sweep
-        if item.get("signals", 0) >= 25 and item.get("hit_rate") is not None
+        if item.get("signals", 0) >= 20 and item.get("hit_rate") is not None
     ]
     if viable:
         viable.sort(
@@ -1358,13 +1533,14 @@ def _run_pooled_backtest(
             "features": feature_cols,
             "params": {
                 "objective": "high-confidence signal precision",
-                "n_estimators": 400,
-                "max_depth": 4,
+                "n_estimators": 500,
+                "max_depth": 5,
                 "learning_rate": 0.03,
-                "subsample": 0.85,
-                "colsample_bytree": 0.85,
-                "reg_lambda": 1.5,
-                "min_child_samples": 25,
+                "subsample": 0.8,
+                "colsample_bytree": 0.8,
+                "reg_lambda": 2.0,
+                "min_child_samples": 40,
+                "num_leaves": 31,
                 "split": "chronological 60/10/30 per ticker, pooled across selected tickers",
             },
         },
@@ -1392,13 +1568,14 @@ def _make_calibrated_daily_model():
 
     model = LGBMClassifier(
         objective="binary",
-        n_estimators=400,
-        max_depth=4,
+        n_estimators=500,
+        max_depth=5,
         learning_rate=0.03,
-        subsample=0.85,
-        colsample_bytree=0.85,
-        reg_lambda=1.5,
-        min_child_samples=25,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        reg_lambda=2.0,
+        min_child_samples=40,
+        num_leaves=31,
         random_state=42,
         n_jobs=4,
         verbosity=-1,
@@ -1472,7 +1649,7 @@ def _run_live_scanner(
     live_rows: list[dict] = []
     errors: list[str] = []
     feature_cols: list[str] | None = list(artifact.get("feature_cols") or []) if artifact else None
-    provider_used = "twelve_data"
+    provider_used = _get_market_data_source()
     for idx, ticker in enumerate(tickers):
         try:
             trainable_df, live_row, provider_used, feature_cols = _prepare_ticker_scan_frame(ticker)
@@ -1645,7 +1822,7 @@ def _run_ticker_backtest(
         period="3y",
         interval="1d",
         prepost=False,
-        source="twelve_data",
+        source=_get_market_data_source(),
         ttl_sec=24 * 3600,
         stale_ttl_sec=7 * 24 * 3600,
     )
@@ -1867,6 +2044,10 @@ def _ensure_category_storage() -> None:
     CATEGORY_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _ensure_watchlist_cache_storage() -> None:
+    WATCHLIST_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+
 def _setup_logging() -> None:
     _ensure_log_storage()
     if any(
@@ -1887,6 +2068,123 @@ def _append_client_action_log(entry: dict) -> None:
     _ensure_log_storage()
     with CLIENT_ACTION_LOG_PATH.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=True) + "\n")
+
+
+def _append_upstream_api_log(entry: dict) -> None:
+    _ensure_log_storage()
+    with UPSTREAM_API_LOG_PATH.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=True) + "\n")
+
+
+@contextlib.contextmanager
+def _upstream_usage_scope(label: str):
+    token = set_upstream_usage_context(label)
+    try:
+        yield
+    finally:
+        reset_upstream_usage_context(token)
+
+
+def _read_recent_jsonl(path: Path, max_entries: int = 500) -> list[dict]:
+    rows: deque[dict] = deque(maxlen=max_entries)
+    if not path.exists():
+        return []
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            for raw_line in fh:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(obj, dict):
+                    rows.append(obj)
+    except Exception:
+        return []
+    return list(rows)
+
+
+def _build_upstream_usage_snapshot(max_entries: int = 500) -> dict:
+    entries = _read_recent_jsonl(UPSTREAM_API_LOG_PATH, max_entries=max_entries)
+    today_key = _current_local_day_key()
+    by_context: dict[str, dict] = {}
+    by_provider: dict[str, int] = {}
+    by_endpoint: dict[str, int] = {}
+    total = 0
+    rate_limited = 0
+    error_count = 0
+    filtered_entries: list[dict] = []
+
+    for entry in entries:
+        ts_utc = str(entry.get("ts_utc") or "").strip()
+        if not ts_utc:
+            continue
+        try:
+            ts_local_day = datetime.fromisoformat(ts_utc).astimezone().date().isoformat()
+        except Exception:
+            continue
+        if ts_local_day != today_key:
+            continue
+        filtered_entries.append(entry)
+        total += 1
+        context = str(entry.get("usage_context") or "other").strip().lower() or "other"
+        provider = str(entry.get("provider") or "unknown").strip().lower() or "unknown"
+        endpoint = str(entry.get("endpoint") or "unknown").strip() or "unknown"
+        status = entry.get("http_status")
+        status_int = int(status) if isinstance(status, int) or (isinstance(status, str) and status.isdigit()) else None
+        is_rate_limited = status_int == 429
+        is_error = (status_int is not None and status_int >= 400) or bool(entry.get("error"))
+
+        bucket = by_context.setdefault(
+            context,
+            {"context": context, "calls": 0, "rate_limited": 0, "errors": 0, "last_call_utc": "", "providers": {}},
+        )
+        bucket["calls"] += 1
+        if is_rate_limited:
+            bucket["rate_limited"] += 1
+            rate_limited += 1
+        if is_error:
+            bucket["errors"] += 1
+            error_count += 1
+        if ts_utc and ts_utc > str(bucket.get("last_call_utc") or ""):
+            bucket["last_call_utc"] = ts_utc
+        provider_counts = bucket["providers"]
+        provider_counts[provider] = int(provider_counts.get(provider) or 0) + 1
+
+        by_provider[provider] = int(by_provider.get(provider) or 0) + 1
+        endpoint_key = f"{provider}:{endpoint}"
+        by_endpoint[endpoint_key] = int(by_endpoint.get(endpoint_key) or 0) + 1
+
+    recent_entries: list[dict] = []
+    for entry in reversed(filtered_entries[-200:]):
+        recent_entries.append(
+            {
+                "ts_utc": str(entry.get("ts_utc") or ""),
+                "usage_context": str(entry.get("usage_context") or "other"),
+                "provider": str(entry.get("provider") or ""),
+                "endpoint": str(entry.get("endpoint") or ""),
+                "symbol": str(entry.get("symbol") or ""),
+                "interval": str(entry.get("interval") or ""),
+                "http_status": entry.get("http_status"),
+                "diagnostic": bool(entry.get("diagnostic")),
+                "error": str(entry.get("error") or ""),
+            }
+        )
+
+    return {
+        "day_key": today_key,
+        "totals": {
+            "calls": total,
+            "rate_limited": rate_limited,
+            "errors": error_count,
+        },
+        "by_context": sorted(by_context.values(), key=lambda item: (-int(item.get("calls") or 0), str(item.get("context") or ""))),
+        "by_provider": [{"provider": key, "calls": by_provider[key]} for key in sorted(by_provider, key=lambda k: (-by_provider[k], k))],
+        "by_endpoint": [{"endpoint": key, "calls": by_endpoint[key]} for key in sorted(by_endpoint, key=lambda k: (-by_endpoint[k], k))[:20]],
+        "recent_entries": recent_entries,
+    }
 
 
 def _append_rsi_monitor_log(entry: dict) -> None:
@@ -1911,6 +2209,342 @@ def _extract_watchlist_symbols_from_categories() -> list[str]:
             seen.add(sym)
             symbols.append(sym)
     return symbols
+
+
+def _current_local_day_key() -> str:
+    try:
+        return datetime.now().astimezone().date().isoformat()
+    except Exception:
+        return datetime.now(timezone.utc).date().isoformat()
+
+
+def _watchlist_cache_key(tickers: list[str], range_key: str) -> str:
+    normalized = sorted({_sanitize_ticker(t) for t in tickers if _sanitize_ticker(t)})
+    digest = hashlib.sha1((",".join(normalized)).encode("utf-8")).hexdigest()[:16]
+    return f"{_current_local_day_key()}::{range_key}::{digest}"
+
+
+def _extract_watchlist_error_ticker(message: str) -> str:
+    text = str(message or "").strip()
+    if ":" not in text:
+        return ""
+    return _sanitize_ticker(text.split(":", 1)[0])
+
+
+def _copy_watchlist_entry(entry: dict | None) -> dict:
+    if not isinstance(entry, dict):
+        return {}
+    return {
+        "ok": bool(entry.get("ok", True)),
+        "status": str(entry.get("status") or "pending"),
+        "source": str(entry.get("source") or _get_market_data_source()),
+        "day_key": str(entry.get("day_key") or ""),
+        "universe_label": str(entry.get("universe_label") or ""),
+        "range": str(entry.get("range") or "1d"),
+        "tickers_considered": int(entry.get("tickers_considered") or 0),
+        "loaded_count": int(entry.get("loaded_count") or 0),
+        "items": list(entry.get("items") or []),
+        "no_match_tickers": list(entry.get("no_match_tickers") or []),
+        "errors": list(entry.get("errors") or []),
+        "started_at": str(entry.get("started_at") or ""),
+        "completed_at": str(entry.get("completed_at") or ""),
+        "last_ticker": str(entry.get("last_ticker") or ""),
+        "cache_key": str(entry.get("cache_key") or ""),
+        "force_refresh": bool(entry.get("force_refresh", False)),
+        "delay_sec": float(entry.get("delay_sec") or WATCHLIST_SCAN_DELAY_SEC),
+        "scan_mode": str(entry.get("scan_mode") or "interactive"),
+    }
+
+
+def _watchlist_cache_file_path(cache_key: str) -> Path:
+    _ensure_watchlist_cache_storage()
+    safe_key = re.sub(r"[^A-Za-z0-9._:-]", "_", str(cache_key or "watchlist"))
+    return WATCHLIST_CACHE_DIR / f"{safe_key}.json"
+
+
+def _write_watchlist_cache_entry_to_disk(cache_key: str, entry: dict) -> None:
+    try:
+        path = _watchlist_cache_file_path(cache_key)
+        path.write_text(json.dumps(_copy_watchlist_entry(entry), ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _read_watchlist_cache_entry_from_disk(cache_key: str) -> dict:
+    try:
+        path = _watchlist_cache_file_path(cache_key)
+        if not path.exists():
+            return {}
+        entry = json.loads(path.read_text(encoding="utf-8"))
+        copied = _copy_watchlist_entry(entry if isinstance(entry, dict) else {})
+        if str(copied.get("day_key") or "") != _current_local_day_key():
+            return {}
+        if str(copied.get("status") or "") == "running":
+            copied["status"] = "ready"
+            copied["completed_at"] = str(copied.get("completed_at") or copied.get("started_at") or "")
+        return copied
+    except Exception:
+        return {}
+
+
+def _prune_watchlist_cache_locked() -> None:
+    today_key = _current_local_day_key()
+    stale_keys = [key for key, value in _watchlist_cache.items() if str((value or {}).get("day_key") or "") != today_key]
+    for key in stale_keys:
+        _watchlist_cache.pop(key, None)
+    try:
+        _ensure_watchlist_cache_storage()
+        for path in WATCHLIST_CACHE_DIR.glob("*.json"):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                path.unlink(missing_ok=True)
+                continue
+            if str((payload or {}).get("day_key") or "") != today_key:
+                path.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def _set_watchlist_cache_entry(cache_key: str, entry: dict) -> None:
+    with _watchlist_cache_lock:
+        _prune_watchlist_cache_locked()
+        copied = _copy_watchlist_entry(entry)
+        _watchlist_cache[cache_key] = dict(copied)
+    _write_watchlist_cache_entry_to_disk(cache_key, copied)
+
+
+def _get_watchlist_cache_entry(cache_key: str) -> dict:
+    with _watchlist_cache_lock:
+        _prune_watchlist_cache_locked()
+        in_memory = _copy_watchlist_entry(_watchlist_cache.get(cache_key))
+        if in_memory:
+            return in_memory
+    disk_entry = _read_watchlist_cache_entry_from_disk(cache_key)
+    if disk_entry:
+        with _watchlist_cache_lock:
+            _watchlist_cache[cache_key] = dict(disk_entry)
+        return disk_entry
+    return {}
+
+
+def _extract_watchlist_error_ticker(message: str) -> str:
+    text = str(message or "").strip()
+    if not text:
+        return ""
+    head, _, _tail = text.partition(":")
+    return _sanitize_ticker(head)
+
+
+def _run_watchlist_scan_background(
+    cache_key: str,
+    tickers: list[str],
+    universe_label: str,
+    range_key: str,
+    force_refresh: bool = False,
+    seed_entry: dict | None = None,
+    initial_delay_sec: float | None = None,
+    scan_mode: str = "background",
+) -> None:
+    items_map: dict[str, list[str]] = {}
+    no_match_set: set[str] = set()
+    errors_by_ticker: dict[str, str] = {}
+
+    if isinstance(seed_entry, dict):
+        for item in list(seed_entry.get("items") or []):
+            ticker = _sanitize_ticker(item.get("ticker"))
+            alerts = [str(alert).strip() for alert in list(item.get("alerts") or []) if str(alert).strip()]
+            if ticker and alerts:
+                items_map[ticker] = alerts
+        for ticker in list(seed_entry.get("no_match_tickers") or []):
+            symbol = _sanitize_ticker(ticker)
+            if symbol and symbol not in items_map:
+                no_match_set.add(symbol)
+        for err in list(seed_entry.get("errors") or []):
+            symbol = _extract_watchlist_error_ticker(err)
+            if symbol:
+                errors_by_ticker[symbol] = str(err).strip()
+
+    loaded_count = len(items_map) + len(no_match_set)
+
+    for ticker in tickers:
+        items_map.pop(ticker, None)
+        no_match_set.discard(ticker)
+        errors_by_ticker.pop(ticker, None)
+
+    try:
+        with _upstream_usage_scope("watchlist"):
+            for idx, ticker in enumerate(tickers):
+                response, status = _build_history_payload(ticker=ticker, range_key=range_key, force_refresh=force_refresh)
+                if status != 200:
+                    err = str(response.get("error") or "request failed").strip()
+                    hint = str(response.get("hint") or "").strip()
+                    errors_by_ticker[ticker] = f"{ticker}: {err}{' | ' + hint if hint else ''}"
+                else:
+                    loaded_count += 1
+                    alerts = _detect_confluence_alerts_payload(response)
+                    if alerts:
+                        items_map[ticker] = [str(alert.get("text") or "") for alert in alerts if str(alert.get("text") or "").strip()]
+                        no_match_set.discard(ticker)
+                    else:
+                        items_map.pop(ticker, None)
+                        no_match_set.add(ticker)
+
+                items = [{"ticker": symbol, "alerts": items_map[symbol]} for symbol in sorted(items_map)]
+                no_match_tickers = sorted(no_match_set)
+                errors = [errors_by_ticker[symbol] for symbol in sorted(errors_by_ticker)]
+                _set_watchlist_cache_entry(
+                    cache_key,
+                    {
+                        "ok": True,
+                        "status": "running",
+                        "day_key": _current_local_day_key(),
+                        "universe_label": universe_label,
+                        "range": range_key,
+                        "tickers_considered": len(tickers),
+                        "loaded_count": loaded_count,
+                        "items": items,
+                        "no_match_tickers": no_match_tickers,
+                        "errors": errors,
+                        "started_at": (_get_watchlist_cache_entry(cache_key).get("started_at") or datetime.now(timezone.utc).isoformat()),
+                        "completed_at": "",
+                        "last_ticker": ticker,
+                        "cache_key": cache_key,
+                        "force_refresh": force_refresh,
+                        "delay_sec": float(initial_delay_sec or WATCHLIST_SCAN_DELAY_SEC),
+                        "scan_mode": scan_mode,
+                    },
+                )
+
+                provider_used = str(response.get("provider_used") or "")
+                if idx < len(tickers) - 1 and (force_refresh or "cache" not in provider_used.lower()):
+                    current_entry = _get_watchlist_cache_entry(cache_key)
+                    current_delay = float(current_entry.get("delay_sec") or initial_delay_sec or WATCHLIST_SCAN_DELAY_SEC)
+                    time.sleep(max(0.8, current_delay))
+
+        items.sort(key=lambda item: str(item.get("ticker") or ""))
+        no_match_tickers.sort()
+        errors.sort()
+        _set_watchlist_cache_entry(
+            cache_key,
+            {
+                "ok": True,
+                "status": "ready",
+                "day_key": _current_local_day_key(),
+                "universe_label": universe_label,
+                "range": range_key,
+                "tickers_considered": len(tickers),
+                "loaded_count": loaded_count,
+                "items": items,
+                "no_match_tickers": no_match_tickers,
+                "errors": errors,
+                "started_at": (_get_watchlist_cache_entry(cache_key).get("started_at") or datetime.now(timezone.utc).isoformat()),
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "last_ticker": tickers[-1] if tickers else "",
+                "cache_key": cache_key,
+                "force_refresh": force_refresh,
+                "delay_sec": float(initial_delay_sec or WATCHLIST_SCAN_DELAY_SEC),
+                "scan_mode": scan_mode,
+            },
+        )
+    except Exception as exc:
+        _set_watchlist_cache_entry(
+            cache_key,
+            {
+                "ok": False,
+                "status": "failed",
+                "day_key": _current_local_day_key(),
+                "universe_label": universe_label,
+                "range": range_key,
+                "tickers_considered": len(tickers),
+                "loaded_count": loaded_count,
+                "items": items,
+                "no_match_tickers": no_match_tickers,
+                "errors": errors + [f"watchlist scan failed: {exc}"],
+                "started_at": (_get_watchlist_cache_entry(cache_key).get("started_at") or datetime.now(timezone.utc).isoformat()),
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "last_ticker": "",
+                "cache_key": cache_key,
+                "force_refresh": force_refresh,
+                "delay_sec": float(initial_delay_sec or WATCHLIST_SCAN_DELAY_SEC),
+                "scan_mode": scan_mode,
+            },
+        )
+
+
+def _ensure_watchlist_scan(
+    tickers: list[str],
+    universe_label: str,
+    range_key: str,
+    force_refresh: bool = False,
+    retry_errors: bool = False,
+    interactive: bool = False,
+) -> dict:
+    cache_key = _watchlist_cache_key(tickers, range_key)
+    start_thread = False
+    seed_entry: dict | None = None
+    tickers_to_scan = list(tickers)
+    requested_delay_sec = WATCHLIST_SCAN_DELAY_SEC if interactive else WATCHLIST_BACKGROUND_SCAN_DELAY_SEC
+    requested_mode = "interactive" if interactive else "background"
+    with _watchlist_cache_lock:
+        _prune_watchlist_cache_locked()
+        existing = _watchlist_cache.get(cache_key)
+        if not existing:
+            disk_entry = _read_watchlist_cache_entry_from_disk(cache_key)
+            if disk_entry:
+                _watchlist_cache[cache_key] = dict(disk_entry)
+                existing = _watchlist_cache.get(cache_key)
+        if existing and str(existing.get("status") or "") == "running":
+            existing["delay_sec"] = min(float(existing.get("delay_sec") or requested_delay_sec), float(requested_delay_sec))
+            if interactive:
+                existing["scan_mode"] = "interactive"
+            return _copy_watchlist_entry(existing)
+        if existing and retry_errors and not force_refresh:
+            failed_tickers = []
+            for err in list(existing.get("errors") or []):
+                symbol = _extract_watchlist_error_ticker(err)
+                if symbol and symbol in tickers_to_scan and symbol not in failed_tickers:
+                    failed_tickers.append(symbol)
+            if failed_tickers:
+                seed_entry = _copy_watchlist_entry(existing)
+                tickers_to_scan = failed_tickers
+            else:
+                return _copy_watchlist_entry(existing)
+        if existing and not force_refresh and not seed_entry:
+            return _copy_watchlist_entry(existing)
+        started_at = datetime.now(timezone.utc).isoformat()
+        _watchlist_cache[cache_key] = {
+            "ok": True,
+            "status": "running",
+            "day_key": _current_local_day_key(),
+            "universe_label": universe_label,
+            "range": range_key,
+            "tickers_considered": len(tickers),
+            "loaded_count": int((seed_entry or {}).get("loaded_count") or 0),
+            "items": list((seed_entry or {}).get("items") or []),
+            "no_match_tickers": list((seed_entry or {}).get("no_match_tickers") or []),
+            "errors": list((seed_entry or {}).get("errors") or []),
+            "started_at": started_at,
+            "completed_at": "",
+            "last_ticker": "",
+            "cache_key": cache_key,
+            "force_refresh": force_refresh,
+            "delay_sec": float(requested_delay_sec),
+            "scan_mode": requested_mode,
+        }
+        start_thread = True
+        entry = _copy_watchlist_entry(_watchlist_cache[cache_key])
+
+    if start_thread:
+        _write_watchlist_cache_entry_to_disk(cache_key, entry)
+        thread = threading.Thread(
+            target=_run_watchlist_scan_background,
+            args=(cache_key, tickers_to_scan, universe_label, range_key, force_refresh, seed_entry, requested_delay_sec, requested_mode),
+            daemon=True,
+            name=f"watchlist-prewarm-{range_key}",
+        )
+        thread.start()
+    return entry
 
 
 def _extract_close_series(df: pd.DataFrame) -> pd.DataFrame:
@@ -1983,12 +2617,13 @@ def _compute_rsi_points(close_df: pd.DataFrame, period: int = RSI_PERIOD) -> lis
 
 
 def _analyze_intraday_rsi(ticker: str) -> dict:
+    source = _get_market_data_source()
     df, _ = fetch_price_history_by_source(
         ticker=ticker,
         period="1d",
         interval="1m",
         prepost=True,
-        source="twelve_data",
+        source=source,
     )
     close_df = _extract_close_series(df)
     points = _compute_rsi_points(close_df, period=RSI_PERIOD)
@@ -2009,15 +2644,16 @@ def _run_rsi_monitor_once(force_tickers: list[str] | None = None) -> dict:
 
     latest: dict[str, dict] = {}
     errors: list[str] = []
-    for ticker in tickers:
-        try:
-            result = _analyze_intraday_rsi(ticker)
-            latest[ticker] = {
-                "points_count": result["points_count"],
-                "latest": result["latest"],
-            }
-        except Exception as exc:
-            errors.append(f"{ticker}: {exc}")
+    with _upstream_usage_scope("rsi_monitor"):
+        for ticker in tickers:
+            try:
+                result = _analyze_intraday_rsi(ticker)
+                latest[ticker] = {
+                    "points_count": result["points_count"],
+                    "latest": result["latest"],
+                }
+            except Exception as exc:
+                errors.append(f"{ticker}: {exc}")
 
     with _rsi_monitor_lock:
         _rsi_monitor_state["last_run_utc"] = datetime.now(timezone.utc).isoformat()
@@ -2408,6 +3044,30 @@ def _to_chart_points(df: pd.DataFrame) -> list[dict]:
     return points
 
 
+def _trim_df_to_recent_trading_sessions(df: pd.DataFrame, session_count: int) -> pd.DataFrame:
+    if df.empty or session_count <= 0:
+        return df
+    working = df.copy()
+    if "date" not in working.columns:
+        for candidate in ("Date", "Datetime", "index"):
+            if candidate in working.columns:
+                working = working.rename(columns={candidate: "date"})
+                break
+    if "date" not in working.columns:
+        return working
+    parsed = pd.to_datetime(working["date"], utc=True, errors="coerce")
+    if parsed.isna().all():
+        return working
+    session_labels = parsed.dt.tz_convert("America/New_York").dt.strftime("%Y-%m-%d")
+    unique_sessions = [str(label) for label in pd.unique(session_labels.dropna()) if str(label)]
+    if len(unique_sessions) <= session_count:
+        return working
+    keep_sessions = set(unique_sessions[-session_count:])
+    mask = session_labels.isin(keep_sessions)
+    trimmed = working.loc[mask].copy()
+    return trimmed.reset_index(drop=True)
+
+
 def _filter_regular_session_points(points: list[dict]) -> list[dict]:
     out_with_day: list[tuple[dict, str]] = []
     for pt in points:
@@ -2471,6 +3131,248 @@ def _to_moving_average_points(df: pd.DataFrame, windows: dict[str, int]) -> dict
     return out
 
 
+def _compute_bollinger_bands_pd(close: pd.Series, window: int = 20, num_std: float = 2.0) -> tuple[pd.Series, pd.Series]:
+    mean = close.rolling(window=window, min_periods=window).mean()
+    std = close.rolling(window=window, min_periods=window).std(ddof=0)
+    upper = mean + (std * num_std)
+    lower = mean - (std * num_std)
+    return upper, lower
+
+
+def _build_history_payload(
+    ticker: str,
+    range_key: str,
+    force_refresh: bool = False,
+    chart_type: str = "line",
+) -> tuple[dict, int]:
+    ticker = _sanitize_ticker(ticker)
+    range_key = str(range_key or "1m").strip().lower()
+    chart_type = str(chart_type or "line").strip().lower()
+    if not ticker:
+        return {"error": "Ticker is required."}, 400
+    if range_key not in RANGE_MAP:
+        return {"error": f"Unsupported range '{range_key}'."}, 400
+
+    period, interval = RANGE_MAP[range_key]
+    if chart_type == "candles" and range_key == "1d":
+        interval = "10m"
+    elif chart_type == "candles" and range_key != "1d":
+        interval = "1d"
+    source = _get_market_data_source()
+    use_prepost = range_key == "1d"
+    ttl_history_sec = 0 if force_refresh else 300
+
+    try:
+        df, provider_used = _fetch_price_history_cached(
+            ticker=ticker,
+            period=period,
+            interval=interval,
+            prepost=use_prepost,
+            source=source,
+            ttl_sec=ttl_history_sec,
+        )
+        if df.empty and range_key == "1d":
+            df, provider_used = _fetch_price_history_cached(
+                ticker=ticker,
+                period="1d",
+                interval="5m",
+                prepost=True,
+                source=source,
+                ttl_sec=ttl_history_sec,
+            )
+
+        target_sessions = TRADING_DAY_TARGETS.get(range_key)
+        if target_sessions and range_key != "1d":
+            if interval == "1d":
+                df = df.tail(target_sessions).copy()
+            else:
+                df = _trim_df_to_recent_trading_sessions(df, target_sessions)
+
+        points = _to_chart_points(df)
+        if range_key == "1d":
+            points = _filter_regular_session_points(points)
+        if not points:
+            extra_hint = ""
+            if source == "twelve_data" and not _get_config_value("TWELVE_DATA_API_KEY"):
+                extra_hint = " TWELVE_DATA_API_KEY is not set in this server process."
+            diagnosis = diagnose_source_failure(ticker=ticker, period=period, interval=interval, source=source)
+            if diagnosis:
+                extra_hint = f"{extra_hint} {diagnosis}".strip()
+            return (
+                {
+                    "error": "No market data returned from upstream provider.",
+                    "hint": (
+                        "Upstream may be rate-limiting (HTTP 429) or TLS/certificate connectivity may be failing."
+                        + extra_hint
+                    ),
+                    "ticker": ticker,
+                    "range": range_key,
+                    "period": period,
+                    "interval": interval,
+                    "source": source,
+                    "provider_used": provider_used,
+                    "count": 0,
+                    "points": [],
+                    "as_of_utc": datetime.now(timezone.utc).isoformat(),
+                },
+                502,
+            )
+
+        ma_points: dict[str, list[dict]] = {}
+        try:
+            daily_df, _ = _fetch_price_history_cached(
+                ticker=ticker,
+                period="2y",
+                interval="1d",
+                prepost=False,
+                source=source,
+                ttl_sec=3600,
+            )
+            ma_points = _to_moving_average_points(daily_df, {"ma50": 50, "ma200": 200})
+        except Exception:
+            ma_points = {}
+
+        return (
+            {
+                "ticker": ticker,
+                "range": range_key,
+                "period": period,
+                "interval": interval,
+                "source": source,
+                "provider_used": provider_used,
+                "count": len(points),
+                "points": points,
+                "moving_averages": ma_points,
+                "as_of_utc": datetime.now(timezone.utc).isoformat(),
+            },
+            200,
+        )
+    except Exception as exc:  # pragma: no cover
+        return (
+            {
+                "error": str(exc),
+                "type": exc.__class__.__name__,
+                "ticker": ticker,
+                "range": range_key,
+            },
+            500,
+        )
+
+
+def _detect_confluence_alerts_payload(payload: dict) -> list[dict]:
+    points = payload.get("points") or []
+    if not isinstance(points, list) or len(points) < 40:
+        return []
+
+    work = pd.DataFrame(points)
+    if work.empty:
+        return []
+    work["close"] = pd.to_numeric(work.get("close"), errors="coerce")
+    work["volume"] = pd.to_numeric(work.get("volume"), errors="coerce").fillna(0.0)
+    work["t"] = work.get("t", "").astype(str)
+    work = work.dropna(subset=["close"])
+    if len(work) < 30:
+        return []
+
+    close = work["close"].astype(float)
+    rsi = _compute_rsi_series_pd(close, 14)
+    macd, signal, hist = _compute_macd_pd(close)
+    upper, lower = _compute_bollinger_bands_pd(close, 20, 2.0)
+
+    if len(hist.dropna()) < 3:
+        return []
+
+    latest = work.iloc[-1]
+    latest_close = float(latest["close"])
+    latest_vol = float(latest["volume"] or 0.0)
+    rsi_now = float(rsi.iloc[-1]) if pd.notna(rsi.iloc[-1]) else None
+    upper_now = float(upper.iloc[-1]) if pd.notna(upper.iloc[-1]) else None
+    lower_now = float(lower.iloc[-1]) if pd.notna(lower.iloc[-1]) else None
+    hist_now = float(hist.iloc[-1]) if pd.notna(hist.iloc[-1]) else None
+    hist_prev = float(hist.iloc[-2]) if pd.notna(hist.iloc[-2]) else None
+    hist_prev2 = float(hist.iloc[-3]) if pd.notna(hist.iloc[-3]) else None
+    macd_now = float(macd.iloc[-1]) if pd.notna(macd.iloc[-1]) else None
+    signal_now = float(signal.iloc[-1]) if pd.notna(signal.iloc[-1]) else None
+
+    if None in {rsi_now, upper_now, lower_now, hist_now, hist_prev, hist_prev2, macd_now, signal_now}:
+        return []
+
+    recent_vol = work["volume"].tail(20)
+    recent_vol = recent_vol[recent_vol > 0]
+    avg_vol20 = float(recent_vol.mean()) if not recent_vol.empty else 0.0
+
+    ma_daily = payload.get("moving_averages") or {}
+    ma50_pts = ma_daily.get("ma50") or []
+    ma200_pts = ma_daily.get("ma200") or []
+    ma50_raw = float(ma50_pts[-1]["v"]) if ma50_pts else None
+    ma200_raw = float(ma200_pts[-1]["v"]) if ma200_pts else None
+
+    near_upper = latest_close >= (upper_now * 0.995)
+    near_lower = latest_close <= (lower_now * 1.005)
+    hist_falling = hist_now < hist_prev < hist_prev2
+    hist_rising = hist_now > hist_prev > hist_prev2
+    volume_fading = avg_vol20 > 0 and latest_vol < (avg_vol20 * 0.9)
+    volume_rising = avg_vol20 > 0 and latest_vol > (avg_vol20 * 1.2)
+
+    alerts: list[dict] = []
+    ticker = str(payload.get("ticker") or "").upper()
+
+    if rsi_now >= 65 and near_upper and hist_falling and volume_fading:
+        alerts.append(
+            {
+                "ticker": ticker,
+                "kind": "reversal_watch",
+                "text": f"{ticker}: Reversal watch (RSI {rsi_now:.1f}, near upper band, MACD momentum fading, volume cooling).",
+            }
+        )
+
+    trend_up = (ma50_raw is not None and latest_close > ma50_raw) or (ma200_raw is not None and latest_close > ma200_raw)
+    if 52 <= rsi_now <= 68 and macd_now > signal_now and hist_rising and trend_up and volume_rising:
+        alerts.append(
+            {
+                "ticker": ticker,
+                "kind": "trend_up_watch",
+                "text": f"{ticker}: Uptrend continuation watch (RSI rising, MACD bullish, above MA trend filter, volume confirming).",
+            }
+        )
+
+    band_width_pct = ((upper_now - lower_now) / max(abs(latest_close), 1e-9)) * 100.0
+    if band_width_pct < 1.2 and rsi_now > 50 and macd_now > signal_now and volume_rising:
+        alerts.append(
+            {
+                "ticker": ticker,
+                "kind": "squeeze_breakout_watch",
+                "text": f"{ticker}: Bollinger squeeze breakout watch (tight bands + RSI>50 + MACD bullish + volume pickup).",
+            }
+        )
+
+    if rsi_now <= 35 and near_lower and hist_now > hist_prev and volume_rising:
+        alerts.append(
+            {
+                "ticker": ticker,
+                "kind": "bounce_watch",
+                "text": f"{ticker}: Oversold bounce watch (RSI {rsi_now:.1f}, near lower band, MACD histogram improving).",
+            }
+        )
+
+    return alerts
+
+
+def _acquire_twelve_rate_limit_slot() -> None:
+    while True:
+        sleep_for = 0.0
+        now = time.time()
+        with _twelve_rate_limit_lock:
+            while _twelve_rate_limit_hits and (now - _twelve_rate_limit_hits[0]) >= TWELVE_RATE_LIMIT_WINDOW_SEC:
+                _twelve_rate_limit_hits.popleft()
+            if len(_twelve_rate_limit_hits) < TWELVE_RATE_LIMIT_PER_MIN:
+                _twelve_rate_limit_hits.append(now)
+                return
+            oldest = _twelve_rate_limit_hits[0]
+            sleep_for = max(0.25, TWELVE_RATE_LIMIT_WINDOW_SEC - (now - oldest) + 0.05)
+        time.sleep(sleep_for)
+
+
 def _fetch_price_history_cached(
     ticker: str,
     period: str,
@@ -2502,6 +3404,8 @@ def _fetch_price_history_cached(
         return l2_df.copy(), "disk_cache"
 
     # --- L3: upstream API ---
+    if (source or "auto").strip().lower() == "twelve_data":
+        _acquire_twelve_rate_limit_slot()
     df, provider = fetch_price_history_by_source(
         ticker=ticker,
         period=period,
@@ -2595,8 +3499,22 @@ def api_log_paths():
         {
             "server_log": str(SERVER_LOG_PATH),
             "client_action_log": str(CLIENT_ACTION_LOG_PATH),
+            "upstream_api_log": str(UPSTREAM_API_LOG_PATH),
         }
     )
+
+
+@app.get("/api/upstream-usage")
+def api_upstream_usage():
+    limit = request.args.get("limit", "500")
+    try:
+        max_entries = max(50, min(2000, int(limit)))
+    except Exception:
+        max_entries = 500
+    snapshot = _build_upstream_usage_snapshot(max_entries=max_entries)
+    snapshot["log_path"] = str(UPSTREAM_API_LOG_PATH)
+    snapshot["max_entries"] = max_entries
+    return jsonify(snapshot)
 
 
 @app.get("/")
@@ -2701,11 +3619,15 @@ def api_import_portfolio():
     items = _load_portfolio_config()
 
     # Replace existing tab with the same display name (case-insensitive) to avoid duplicates on re-import.
+    # Preserve the prior portfolio identity and selection/removal state so periodic CSV refreshes
+    # keep the user's category links and imported-holdings workflow intact.
     normalized_name = name[:80].strip().lower()
     kept_items = []
+    existing_item = None
     for item in items:
         item_name = str(item.get("name") or "").strip().lower()
         if item_name == normalized_name:
+            existing_item = item
             old_csv_rel = str(item.get("csv_path") or "").strip()
             if old_csv_rel:
                 try:
@@ -2716,18 +3638,20 @@ def api_import_portfolio():
         kept_items.append(item)
 
     items = kept_items
+    existing_id = str((existing_item or {}).get("id") or "").strip()
     items.insert(
         0,
         {
-            "id": portfolio_id,
+            "id": existing_id or portfolio_id,
             "name": name[:80],
             "csv_path": str(stored_path.relative_to(BASE_DIR)),
-            "collapsed": False,
-            "selected_keys": [],
-            "removed_keys": [],
-            "selected_symbols": [],
-            "removed_symbols": [],
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "collapsed": bool((existing_item or {}).get("collapsed", False)),
+            "selected_keys": list((existing_item or {}).get("selected_keys", [])),
+            "removed_keys": list((existing_item or {}).get("removed_keys", [])),
+            "selected_symbols": list((existing_item or {}).get("selected_symbols", [])),
+            "removed_symbols": list((existing_item or {}).get("removed_symbols", [])),
+            "symbol_overrides": dict((existing_item or {}).get("symbol_overrides") or {}),
+            "created_at": str((existing_item or {}).get("created_at") or datetime.now(timezone.utc).isoformat()),
         },
     )
 
@@ -2794,102 +3718,16 @@ def api_save_portfolios():
 def api_history():
     ticker = (request.args.get("ticker") or "NVDA").strip().upper()
     range_key = (request.args.get("range") or "1m").strip().lower()
-    source = "twelve_data"
     force_refresh = (request.args.get("refresh") or "").strip().lower() in {"1", "true", "yes", "on"}
-
-    if not ticker:
-        return jsonify({"error": "Ticker is required."}), 400
-
-    if range_key not in RANGE_MAP:
-        return jsonify({"error": f"Unsupported range '{range_key}'."}), 400
-    period, interval = RANGE_MAP[range_key]
-    use_prepost = range_key == "1d"
-
-    try:
-        ttl_history_sec = 0 if force_refresh else 300
-        df, provider_used = _fetch_price_history_cached(
+    chart_type = (request.args.get("chart_type") or "line").strip().lower()
+    with _upstream_usage_scope("chart"):
+        response, status = _build_history_payload(
             ticker=ticker,
-            period=period,
-            interval=interval,
-            prepost=use_prepost,
-            source=source,
-            ttl_sec=ttl_history_sec,
+            range_key=range_key,
+            force_refresh=force_refresh,
+            chart_type=chart_type,
         )
-        if df.empty and range_key == "1d":
-            df, provider_used = _fetch_price_history_cached(
-                ticker=ticker,
-                period="1d",
-                interval="5m",
-                prepost=True,
-                source=source,
-                ttl_sec=ttl_history_sec,
-            )
-
-        points = _to_chart_points(df)
-        if range_key == "1d":
-            points = _filter_regular_session_points(points)
-        if not points:
-            extra_hint = ""
-            if not _get_config_value("TWELVE_DATA_API_KEY"):
-                extra_hint = " TWELVE_DATA_API_KEY is not set in this server process."
-            diagnosis = diagnose_source_failure(ticker=ticker, period=period, interval=interval, source=source)
-            if diagnosis:
-                extra_hint = f"{extra_hint} {diagnosis}".strip()
-            return jsonify(
-                {
-                    "error": "No market data returned from upstream provider.",
-                    "hint": (
-                        "Upstream may be rate-limiting (HTTP 429) or TLS/certificate connectivity may be failing."
-                        + extra_hint
-                    ),
-                    "ticker": ticker,
-                    "range": range_key,
-                    "period": period,
-                    "interval": interval,
-                    "source": source,
-                    "provider_used": provider_used,
-                    "count": 0,
-                    "points": [],
-                    "as_of_utc": datetime.now(timezone.utc).isoformat(),
-                }
-            ), 502
-        ma_windows = {"ma50": 50, "ma200": 200}
-        ma_points: dict[str, list[dict]] = {}
-        try:
-            daily_df, _ = _fetch_price_history_cached(
-                ticker=ticker,
-                period="2y",
-                interval="1d",
-                prepost=False,
-                source=source,
-                ttl_sec=3600,
-            )
-            ma_points = _to_moving_average_points(daily_df, ma_windows)
-        except Exception:
-            ma_points = {}
-        return jsonify(
-            {
-                "ticker": ticker,
-                "range": range_key,
-                "period": period,
-                "interval": interval,
-                "source": source,
-                "provider_used": provider_used,
-                "count": len(points),
-                "points": points,
-                "moving_averages": ma_points,
-                "as_of_utc": datetime.now(timezone.utc).isoformat(),
-            }
-        )
-    except Exception as exc:  # pragma: no cover
-        return jsonify(
-            {
-                "error": str(exc),
-                "type": exc.__class__.__name__,
-                "ticker": ticker,
-                "range": range_key,
-            }
-        ), 500
+    return jsonify(response), status
 
 
 @app.get("/api/rsi-monitor/status")
@@ -2924,6 +3762,44 @@ def _call_openai(api_key: str, prompt: str, trend_img: str, regime_img: str, ove
                     {"type": "input_image", "image_url": trend_img},
                     {"type": "input_text", "text": "Regime view screenshot:"},
                     {"type": "input_image", "image_url": regime_img},
+                ],
+            }
+        ],
+    }
+    req_data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/responses",
+        data=req_data,
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            raw = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace") if exc.fp else str(exc)
+        return "", model, {"error": "OpenAI request failed", "detail": detail[:2000], "status": 502}
+    except Exception as exc:
+        return "", model, {"error": "OpenAI request failed", "detail": str(exc)[:1000], "status": 502}
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return "", model, {"error": "OpenAI response parse failed", "detail": raw[:2000], "status": 502}
+    text = _extract_response_text(obj)
+    if not text:
+        return "", model, {"error": "No explanation text returned from model.", "status": 502}
+    return text, model, None
+
+
+def _call_openai_text(api_key: str, prompt: str, override_model: str = "") -> tuple[str, str, dict | None]:
+    model = override_model.strip() if override_model else (_get_config_value("CHART_AI_MODEL") or "gpt-4.1-mini")
+    body = {
+        "model": model,
+        "input": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": prompt},
                 ],
             }
         ],
@@ -3008,6 +3884,21 @@ def _call_gemini(api_key: str, prompt: str, trend_img: str, regime_img: str, ove
     return "", model, err or {"error": "No explanation text returned from Gemini.", "status": 502}
 
 
+def _call_gemini_text(api_key: str, prompt: str, override_model: str = "") -> tuple[str, str, dict | None]:
+    explicit = bool(override_model and override_model.strip())
+    model = override_model.strip() if explicit else (_get_config_value("CHART_AI_MODEL") or "gemini-2.5-flash")
+    fallback = "gemini-2.0-flash"
+    parts = [{"text": prompt}]
+    text, err = _call_gemini_model(api_key, model, parts)
+    if text:
+        return text, model, None
+    if not explicit and model != fallback:
+        text, err = _call_gemini_model(api_key, fallback, parts)
+        if text:
+            return text, fallback, None
+    return "", model, err or {"error": "No explanation text returned from Gemini.", "status": 502}
+
+
 def _call_groq(api_key: str, prompt: str, trend_img: str, regime_img: str, override_model: str = "") -> tuple[str, str, dict | None]:
     model = override_model.strip() if override_model else (_get_config_value("CHART_AI_MODEL") or "meta-llama/llama-4-scout-17b-16e-instruct")
     content: list = [{"type": "text", "text": prompt}]
@@ -3018,6 +3909,38 @@ def _call_groq(api_key: str, prompt: str, trend_img: str, regime_img: str, overr
         else:
             content.append({"type": "text", "text": f"[image: {img[:100]}]"})
     body = {"model": model, "messages": [{"role": "user", "content": content}]}
+    req_data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.groq.com/openai/v1/chat/completions",
+        data=req_data,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+            "User-Agent": "Mozilla/5.0 (compatible; finlab-chart-explain/1.0)",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            raw = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace") if exc.fp else str(exc)
+        return "", model, {"error": "Groq request failed", "detail": detail[:2000], "status": 502}
+    except Exception as exc:
+        return "", model, {"error": "Groq request failed", "detail": str(exc)[:1000], "status": 502}
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return "", model, {"error": "Groq response parse failed", "detail": raw[:2000], "status": 502}
+    text = ((obj.get("choices") or [{}])[0].get("message") or {}).get("content", "").strip()
+    if not text:
+        return "", model, {"error": "No explanation text returned from Groq.", "status": 502}
+    return text, model, None
+
+
+def _call_groq_text(api_key: str, prompt: str, override_model: str = "") -> tuple[str, str, dict | None]:
+    model = override_model.strip() if override_model else (_get_config_value("CHART_AI_MODEL") or "meta-llama/llama-4-scout-17b-16e-instruct")
+    body = {"model": model, "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}]}
     req_data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
         "https://api.groq.com/openai/v1/chat/completions",
@@ -3098,6 +4021,47 @@ def _call_anthropic(api_key: str, prompt: str, trend_img: str, regime_img: str, 
             if text:
                 chunks.append(text)
     text = "\n\n".join(chunks).strip()
+    if not text:
+        return "", model, {"error": "No explanation text returned from Claude.", "status": 502}
+    return text, model, None
+
+
+def _call_anthropic_text(api_key: str, prompt: str, override_model: str = "") -> tuple[str, str, dict | None]:
+    model = override_model.strip() if override_model else (_get_config_value("CHART_AI_MODEL") or "claude-3-5-sonnet-latest")
+    body = {
+        "model": model,
+        "max_tokens": 1200,
+        "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
+    }
+    req_data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=req_data,
+        headers={
+            "Content-Type": "application/json",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            raw = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace") if exc.fp else str(exc)
+        return "", model, {"error": "Claude request failed", "detail": detail[:2000], "status": 502}
+    except Exception as exc:
+        return "", model, {"error": "Claude request failed", "detail": str(exc)[:1000], "status": 502}
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return "", model, {"error": "Claude response parse failed", "detail": raw[:2000], "status": 502}
+    text_parts = []
+    for item in obj.get("content") or []:
+        txt = str(item.get("text") or "").strip()
+        if txt:
+            text_parts.append(txt)
+    text = "\n\n".join(text_parts).strip()
     if not text:
         return "", model, {"error": "No explanation text returned from Claude.", "status": 502}
     return text, model, None
@@ -3232,6 +4196,7 @@ def api_get_config():
             "env_key": cat["env_key"],
         })
     return jsonify({
+        "market_data_source": _get_market_data_source(),
         "twelve_data_api_key": _get_config_value("TWELVE_DATA_API_KEY"),
         "finnhub_api_key": _get_config_value("FINNHUB_API_KEY"),
         "llm_provider": provider,
@@ -3246,6 +4211,7 @@ def api_save_config():
     payload = request.get_json(silent=True) or {}
     llm_keys = payload.get("llm_keys") if isinstance(payload.get("llm_keys"), dict) else {}
     updates = {
+        "MARKET_DATA_SOURCE": str(payload.get("market_data_source") or "twelve_data").strip().lower(),
         "TWELVE_DATA_API_KEY": str(payload.get("twelve_data_api_key") or "").strip(),
         "FINNHUB_API_KEY": str(payload.get("finnhub_api_key") or "").strip(),
         "CHART_AI_PROVIDER": str(payload.get("llm_provider") or "").strip().lower(),
@@ -3391,7 +4357,109 @@ def api_chart_explain():
 
     if err:
         return jsonify(err), err.get("status", 502)
-    return jsonify({"ok": True, "explanation": text, "model": model, "provider": provider, "local_forecast": local_forecast})
+    return jsonify({
+        "ok": True,
+        "explanation": text,
+        "model": model,
+        "provider": provider,
+        "local_forecast": local_forecast,
+        "tomorrow_up_context": tomorrow_up_context,
+    })
+
+
+@app.post("/api/chart-explain-followup")
+def api_chart_explain_followup():
+    payload = request.get_json(silent=True) or {}
+    ticker = _sanitize_ticker(payload.get("ticker"))
+    range_key = str(payload.get("range") or "").strip().lower()
+    scale = str(payload.get("scale") or "").strip().lower()
+    question = str(payload.get("question") or "").strip()
+    current_read = str(payload.get("current_read") or "").strip()
+    next_outlook = str(payload.get("next_outlook") or "").strip()
+    local_forecast = payload.get("local_forecast") if isinstance(payload.get("local_forecast"), dict) else {}
+    tomorrow_up_context = payload.get("tomorrow_up_context") if isinstance(payload.get("tomorrow_up_context"), dict) else {}
+    history = payload.get("history") if isinstance(payload.get("history"), list) else []
+
+    if not ticker:
+        return jsonify({"error": "ticker is required"}), 400
+    if not question:
+        return jsonify({"error": "question is required"}), 400
+    if not current_read and not next_outlook:
+        return jsonify({"error": "current_read or next_outlook is required"}), 400
+
+    requested_provider = str(payload.get("provider") or "").strip().lower()
+    requested_model = str(payload.get("model") or "").strip()
+
+    if not requested_provider:
+        requested_provider = _get_config_value("CHART_AI_PROVIDER", _load_ai_settings().get("provider", ""))
+    if not requested_provider:
+        for pid in _AI_PROVIDER_CATALOG:
+            if _get_ai_key(pid):
+                requested_provider = pid
+                break
+
+    openai_key = _get_ai_key("openai")
+    gemini_key = _get_ai_key("gemini")
+    groq_key = _get_ai_key("groq")
+    anthropic_key = _get_ai_key("anthropic")
+    if not openai_key and not gemini_key and not groq_key and not anthropic_key:
+        return jsonify(
+            {
+                "error": "No AI API key is configured.",
+                "hint": "Open Config from the center menu and add an AI API key.",
+            }
+        ), 400
+
+    cleaned_history: list[dict[str, str]] = []
+    for item in history[-8:]:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip().lower()
+        text = str(item.get("text") or "").strip()
+        if role not in {"user", "assistant"} or not text:
+            continue
+        cleaned_history.append({"role": role, "text": text[:2000]})
+
+    prompt_text = (
+        "You are continuing a chart-analysis conversation. Answer the user's follow-up using the prior chart explanation as the primary context. "
+        "Stay grounded in the existing explanation and local forecast. Be concise, clear, and specific. "
+        "Do not claim certainty or provide financial advice.\n\n"
+        f"Ticker: {ticker}\n"
+        f"Range selected: {range_key}\n"
+        f"Scale: {scale}\n\n"
+        f"Current Read:\n{current_read[:6000]}\n\n"
+        f"Next Outlook:\n{next_outlook[:6000]}\n\n"
+        f"Local forecast JSON:\n{json.dumps(local_forecast, ensure_ascii=True)}\n\n"
+        f"Tomorrow-up context JSON:\n{json.dumps(tomorrow_up_context, ensure_ascii=True)}\n\n"
+        f"Recent follow-up history JSON:\n{json.dumps(cleaned_history, ensure_ascii=True)}\n\n"
+        f"User follow-up question:\n{question}\n\n"
+        "Answer only the user's actual question first. Do not drift into generic stock-analysis checklists. "
+        "Do not add generic suggestions like 'check recent earnings', 'watch guidance', or 'monitor news' unless the user's question is explicitly about earnings, fundamentals, catalysts, or unless those topics are clearly necessary to answer. "
+        "If the question is about why the stock moved or dropped, use the earnings/fundamentals context directly when it is relevant instead of giving generic advice to go look it up elsewhere. "
+        "If the question is about a pattern, signal, candle, trend, or chart interpretation, answer that directly using the existing chart context and stop there. "
+        "If the question asks for a next step, give a short practical answer tied to this chart only. "
+        "Respond in plain English. Keep the answer to about 2-6 concise bullet points or a short paragraph when that is clearer."
+    )
+
+    key_map = {"openai": openai_key, "gemini": gemini_key, "groq": groq_key, "anthropic": anthropic_key}
+    provider = requested_provider if (requested_provider in key_map and key_map[requested_provider]) else next(
+        (pid for pid in ("groq", "openai", "anthropic", "gemini") if key_map[pid]), None
+    )
+
+    if provider == "groq":
+        text, model, err = _call_groq_text(groq_key, prompt_text, override_model=requested_model)
+    elif provider == "openai":
+        text, model, err = _call_openai_text(openai_key, prompt_text, override_model=requested_model)
+    elif provider == "anthropic":
+        text, model, err = _call_anthropic_text(anthropic_key, prompt_text, override_model=requested_model)
+    elif provider == "gemini":
+        text, model, err = _call_gemini_text(gemini_key, prompt_text, override_model=requested_model)
+    else:
+        return jsonify({"error": f"Provider '{requested_provider}' not available — no API key configured."}), 400
+
+    if err:
+        return jsonify(err), err.get("status", 502)
+    return jsonify({"ok": True, "answer": text, "model": model, "provider": provider})
 
 
 @app.post("/api/backtest")
@@ -3412,11 +4480,12 @@ def api_backtest():
     confidence_threshold = _clamp(_safe_float(payload.get("confidence_threshold")) or 75.0, 0.0, 100.0)
 
     try:
-        results, summary, errors = _run_pooled_backtest(
-            tickers,
-            prob_threshold=prob_threshold,
-            confidence_threshold=confidence_threshold,
-        )
+        with _upstream_usage_scope("backtest"):
+            results, summary, errors = _run_pooled_backtest(
+                tickers,
+                prob_threshold=prob_threshold,
+                confidence_threshold=confidence_threshold,
+            )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 502
     except RuntimeError as exc:
@@ -3429,7 +4498,7 @@ def api_backtest():
     return jsonify(
         {
             "ok": True,
-            "source": "twelve_data",
+            "source": _get_market_data_source(),
             "universe_label": universe_label,
             "summary": summary,
             "results": results,
@@ -3461,12 +4530,13 @@ def api_scanner():
     force_retrain = bool(payload.get("force_retrain"))
 
     try:
-        signals, summary, errors = _run_live_scanner(
-            tickers,
-            prob_threshold=prob_threshold,
-            confidence_threshold=confidence_threshold,
-            force_retrain=force_retrain,
-        )
+        with _upstream_usage_scope("scanner"):
+            signals, summary, errors = _run_live_scanner(
+                tickers,
+                prob_threshold=prob_threshold,
+                confidence_threshold=confidence_threshold,
+                force_retrain=force_retrain,
+            )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 502
     except RuntimeError as exc:
@@ -3476,7 +4546,7 @@ def api_scanner():
     return jsonify(
         {
             "ok": True,
-            "source": "twelve_data",
+            "source": _get_market_data_source(),
             "universe_label": universe_label,
             "summary": summary,
             "signals": signals,
@@ -3487,6 +4557,80 @@ def api_scanner():
             },
         }
     )
+
+
+@app.post("/api/watchlist")
+def api_watchlist():
+    payload = request.get_json(silent=True) or {}
+    tickers_raw = payload.get("tickers") if isinstance(payload.get("tickers"), list) else []
+    universe_label = str(payload.get("universe_label") or "").strip()
+    range_key = str(payload.get("range") or "1d").strip().lower()
+    force_refresh = bool(payload.get("force_refresh"))
+    retry_errors = bool(payload.get("retry_errors"))
+    interactive = bool(payload.get("interactive", True))
+    tickers: list[str] = []
+    for item in tickers_raw:
+        symbol = _sanitize_ticker(item)
+        if symbol and symbol not in tickers:
+            tickers.append(symbol)
+    tickers = tickers[:50]
+    if not tickers:
+        return jsonify({"error": "At least one ticker is required."}), 400
+    if range_key not in RANGE_MAP:
+        return jsonify({"error": f"Unsupported range '{range_key}'."}), 400
+    entry = _ensure_watchlist_scan(
+        tickers,
+        universe_label,
+        range_key,
+        force_refresh=force_refresh,
+        retry_errors=retry_errors,
+        interactive=interactive,
+    )
+    status_code = 200 if str(entry.get("status") or "") == "ready" else 202
+    return jsonify(entry), status_code
+
+
+@app.post("/api/watchlist/prewarm")
+def api_watchlist_prewarm():
+    payload = request.get_json(silent=True) or {}
+    tickers_raw = payload.get("tickers") if isinstance(payload.get("tickers"), list) else []
+    universe_label = str(payload.get("universe_label") or "").strip()
+    range_key = str(payload.get("range") or "1d").strip().lower()
+    tickers: list[str] = []
+    for item in tickers_raw:
+        symbol = _sanitize_ticker(item)
+        if symbol and symbol not in tickers:
+            tickers.append(symbol)
+    tickers = tickers[:50]
+    if not tickers:
+        return jsonify({"error": "At least one ticker is required."}), 400
+    if range_key not in RANGE_MAP:
+        return jsonify({"error": f"Unsupported range '{range_key}'."}), 400
+    entry = _ensure_watchlist_scan(tickers, universe_label, range_key, force_refresh=False, interactive=False)
+    return jsonify(entry)
+
+
+@app.post("/api/watchlist/status")
+def api_watchlist_status():
+    payload = request.get_json(silent=True) or {}
+    tickers_raw = payload.get("tickers") if isinstance(payload.get("tickers"), list) else []
+    range_key = str(payload.get("range") or "1d").strip().lower()
+    tickers: list[str] = []
+    for item in tickers_raw:
+        symbol = _sanitize_ticker(item)
+        if symbol and symbol not in tickers:
+            tickers.append(symbol)
+    tickers = tickers[:50]
+    if not tickers:
+        return jsonify({"error": "At least one ticker is required."}), 400
+    if range_key not in RANGE_MAP:
+        return jsonify({"error": f"Unsupported range '{range_key}'."}), 400
+    cache_key = _watchlist_cache_key(tickers, range_key)
+    entry = _get_watchlist_cache_entry(cache_key)
+    if not entry:
+        return jsonify({"error": "No watchlist cache found for this range/universe yet."}), 404
+    status_code = 200 if str(entry.get("status") or "") == "ready" else 202
+    return jsonify(entry), status_code
 
 
 @app.get("/api/news")

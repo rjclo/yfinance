@@ -17,7 +17,10 @@ API keys and provider settings are managed from the app UI:
 
 Supported config entries:
 - `TWELVE_DATA_API_KEY`
+- `Auto Refresh (5m)` toggle
+- `Open API Usage` button
 - `FINNHUB_API_KEY`
+- `News Popup` toggle
 - AI provider and model defaults
 - AI API keys for supported providers
 
@@ -56,6 +59,7 @@ Current behavior:
   - candlestick patterns
   - recent news
   - local tomorrow-forecast model output
+- The dialog also includes a `Follow-up Chat` area under the two tabs so you can ask additional questions without rerunning the full explanation immediately
 
 AI provider/model/API key settings are configured from `Config`, not inside the lightbulb dialog.
 
@@ -63,8 +67,37 @@ AI provider/model/API key settings are configured from `Config`, not inside the 
 Ticker news uses Finnhub.
 
 - Configure `FINNHUB_API_KEY` in `Config`
-- Clicking a ticker row can open the news popup when news popup is enabled
+- Configure `News Popup` in `Config` if you want ticker-row selection to open the news panel automatically
 - News is also sent to the AI explain flow as context
+
+## Auto Refresh
+- Configure `Auto Refresh (5m)` in `Config`
+- When enabled, the current chart refreshes every 5 minutes
+
+## Workspace Views
+The app now has two top-level tabs:
+
+### Chart
+- Shows the main chart workspace only
+- This includes:
+  - the center chart panel
+  - chart controls
+  - overlays
+  - AI explain
+  - news
+  - scanner / backtest / watch list dialogs
+
+### Portfolio
+- Shows the two portfolio-management panels side by side
+- Left panel:
+  - watchlist categories
+  - categorized ticker rows
+  - `Save` button for holdings/layout state
+- Right panel:
+  - imported CSV portfolio tabs
+  - imported holdings list
+
+The selected top-level tab is remembered locally and restored the next time the app opens.
 
 ## Option 1: Run In A Browser With Python
 ```bash
@@ -114,24 +147,36 @@ docker run --rm -p 5000:5000 \
 
 Open [http://localhost:5000](http://localhost:5000)
 
-## How The Left And Right Tabs Work
+## Portfolio View Details
 
-### Left side: Ticker Categories
+### Left Panel: Ticker Categories
 - Left tabs are your watchlist categories.
 - Each tab contains ticker rows with selection checkboxes.
 - Up to 5 selected tickers are loaded onto the chart.
-- Left side is where you organize symbols you want to monitor.
+- Use the `Save` button in the upper-right of this panel to persist the current portfolio/layout state.
 
-### Right side: Imported Holdings Tabs
+### Right Panel: Imported Holdings Tabs
 - Right tabs are created from imported CSV portfolios.
 - Each right tab shows imported holdings for that portfolio.
-- You can select holdings and push symbols into left categories for charting.
-- Right side is for account/portfolio management; left side is for chart watchlists.
-- Imported holdings layout is saved from the center-panel `...` menu via `Save Holdings Layout`.
+- You can select holdings and copy symbols into left categories for charting.
+- The right panel is for account/portfolio management; the left panel is for chart watchlists.
 
 ### CSV Import Coverage
 - Fidelity and Schwab CSV formats are currently supported/verified.
 - Other brokerage CSV formats may import partially or fail and are not yet verified.
+
+### Importing A New CSV
+- Go to `Portfolio`
+- In the right panel, click the `+` tab
+- Choose the new CSV from Finder
+- Enter a portfolio tab name when prompted
+
+If you use the **same portfolio tab name** as an existing imported portfolio:
+- the old CSV file is replaced
+- the existing portfolio tab is updated instead of duplicated
+- saved imported-holdings state is preserved where keys still match
+
+This is the intended monthly refresh flow when you want to overwrite a previous CSV import with an updated one.
 
 ## Back Test And Scanner
 
@@ -149,6 +194,22 @@ Open [http://localhost:5000](http://localhost:5000)
 - It only reports current live signals that meet the scanner threshold
 - Scanner saves its trained model to disk and reuses it on later runs
 - Use `Retrain Model` inside the scanner dialog to rebuild the scanner model from scratch
+
+### Watch List
+- Open center-panel `...` -> `Watch List`
+- Watch List uses the same banner/confluence logic shown above the chart
+- Same-day watchlist results are cached and reused
+- `Force refresh from Twelve Data` bypasses that cache and rebuilds results with throttling
+
+### API Usage
+- Open center-panel `...` -> `Config`
+- Under `Market Data`, click `Open API Usage`
+- This shows upstream API usage broken down by context such as:
+  - `chart`
+  - `watchlist`
+  - `scanner`
+  - `backtest`
+  - `ai_explain`
 
 ## Data And Logs
 - App data is stored under `data/`

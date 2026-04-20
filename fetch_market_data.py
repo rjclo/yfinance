@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """
-Market data helpers using Twelve Data only.
+Market data helpers using a provider abstraction with Twelve Data as the
+current upstream implementation.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextvars
 import io
+import json
 import os
+import re
+from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -18,8 +23,70 @@ from urllib3.exceptions import InsecureRequestWarning
 
 _HTTP_TIMEOUT_SEC = float(os.getenv("MARKET_HTTP_TIMEOUT_SEC", "15"))
 _MARKET_INSECURE_SSL = os.getenv("MARKET_INSECURE_SSL", "0").strip().lower() in {"1", "true", "yes", "on"}
+_BASE_DIR = Path(__file__).resolve().parent
+_DOTENV_PATH = _BASE_DIR / ".env"
+_UPSTREAM_API_LOG_PATH = _BASE_DIR / "data" / "logs" / "upstream_api_calls.jsonl"
+_UPSTREAM_USAGE_CONTEXT = contextvars.ContextVar("upstream_usage_context", default="other")
 if _MARKET_INSECURE_SSL:
     urllib3.disable_warnings(InsecureRequestWarning)
+
+
+def _append_upstream_api_log(entry: dict) -> None:
+    try:
+        _UPSTREAM_API_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _UPSTREAM_API_LOG_PATH.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry, ensure_ascii=True) + "\n")
+    except Exception:
+        pass
+
+
+def set_upstream_usage_context(value: str):
+    label = str(value or "other").strip().lower() or "other"
+    return _UPSTREAM_USAGE_CONTEXT.set(label)
+
+
+def reset_upstream_usage_context(token) -> None:
+    try:
+        _UPSTREAM_USAGE_CONTEXT.reset(token)
+    except Exception:
+        pass
+
+
+def get_upstream_usage_context() -> str:
+    try:
+        return str(_UPSTREAM_USAGE_CONTEXT.get() or "other")
+    except Exception:
+        return "other"
+
+
+def _parse_dotenv_text(text: str) -> dict[str, str]:
+    parsed: dict[str, str] = {}
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            continue
+        value = value.strip()
+        if len(value) >= 2 and ((value[0] == value[-1] == '"') or (value[0] == value[-1] == "'")):
+            value = value[1:-1]
+        parsed[key] = value
+    return parsed
+
+
+def _get_config_value(key: str, default: str = "") -> str:
+    env_val = os.getenv(key, "").strip()
+    if env_val:
+        return env_val
+    try:
+        if _DOTENV_PATH.exists():
+            file_values = _parse_dotenv_text(_DOTENV_PATH.read_text(encoding="utf-8"))
+            return (file_values.get(key) or "").strip() or default
+    except Exception:
+        pass
+    return default
 
 
 def _http_verify() -> bool:
@@ -27,7 +94,12 @@ def _http_verify() -> bool:
 
 
 def _get_twelve_data_api_key() -> str:
-    return os.getenv("TWELVE_DATA_API_KEY", "").strip()
+    return _get_config_value("TWELVE_DATA_API_KEY")
+
+
+def _get_market_data_source(default: str = "twelve_data") -> str:
+    source = _get_config_value("MARKET_DATA_SOURCE", default).strip().lower()
+    return source if source in {"twelve_data"} else default
 
 
 def _period_to_days(period: str) -> int | None:
@@ -47,6 +119,7 @@ def _interval_to_twelve(interval: str) -> str | None:
     m = {
         "1m": "1min",
         "5m": "5min",
+        "10m": "10min",
         "15m": "15min",
         "1h": "1h",
         "1d": "1day",
@@ -78,10 +151,31 @@ def _fetch_twelve_data(ticker: str, period: str, interval: str) -> pd.DataFrame:
             timeout=_HTTP_TIMEOUT_SEC,
             verify=_http_verify(),
         )
+        _append_upstream_api_log({
+            "ts_utc": datetime.now(timezone.utc).isoformat(),
+            "provider": "twelve_data",
+            "endpoint": "time_series",
+            "symbol": ticker,
+            "period": period,
+            "interval": interval,
+            "http_status": int(resp.status_code),
+            "usage_context": get_upstream_usage_context(),
+        })
         if resp.status_code != 200:
             return pd.DataFrame()
         payload = resp.json() or {}
     except Exception:
+        _append_upstream_api_log({
+            "ts_utc": datetime.now(timezone.utc).isoformat(),
+            "provider": "twelve_data",
+            "endpoint": "time_series",
+            "symbol": ticker,
+            "period": period,
+            "interval": interval,
+            "http_status": None,
+            "error": "request_exception",
+            "usage_context": get_upstream_usage_context(),
+        })
         return pd.DataFrame()
 
     values = payload.get("values")
@@ -140,7 +234,10 @@ def fetch_price_history_by_source(
     prepost: bool = False,
     source: str = "twelve_data",
 ) -> tuple[pd.DataFrame, str]:
-    del prepost, source  # Twelve Data path only.
+    del prepost
+    provider = (source or _get_market_data_source()).strip().lower()
+    if provider != "twelve_data":
+        return pd.DataFrame(), provider or "unknown"
     df = _fetch_twelve_data(ticker=ticker, period=period, interval=interval)
     if not df.empty:
         return df, "twelve_data"
@@ -148,7 +245,11 @@ def fetch_price_history_by_source(
 
 
 def diagnose_source_failure(ticker: str, period: str, interval: str, source: str = "twelve_data") -> str:
-    del period, source
+    del period
+    provider = (source or _get_market_data_source()).strip().lower()
+    if provider != "twelve_data":
+        return f"Unsupported market data source: {provider}"
+
     api_key = _get_twelve_data_api_key()
     if not api_key:
         return "TWELVE_DATA_API_KEY is not set in server process."
@@ -171,6 +272,17 @@ def diagnose_source_failure(ticker: str, period: str, interval: str, source: str
             timeout=_HTTP_TIMEOUT_SEC,
             verify=_http_verify(),
         )
+        _append_upstream_api_log({
+            "ts_utc": datetime.now(timezone.utc).isoformat(),
+            "provider": "twelve_data",
+            "endpoint": "time_series",
+            "symbol": ticker,
+            "period": "",
+            "interval": interval,
+            "http_status": int(r.status_code),
+            "diagnostic": True,
+            "usage_context": get_upstream_usage_context(),
+        })
         if r.status_code != 200:
             return f"Twelve Data HTTP {r.status_code}."
         payload = r.json() or {}
